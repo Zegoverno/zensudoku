@@ -1,0 +1,35 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run check
+      - name: The tag, package.json and plugin.json name one version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          plugin=$(node -p "require('./plugin.json').version")
+          test "$GITHUB_REF_NAME" = "v$version" || { echo "tag $GITHUB_REF_NAME != v$version (package.json)"; exit 1; }
+          test "$version" = "$plugin" || { echo "package.json $version != plugin.json $plugin"; exit 1; }
+      - run: npm run pack
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          name=$(node -p "require('./plugin.json').name + '-' + require('./plugin.json').version")
+          archive="dist/$name.tgz"
+          sha=$(sha256sum "$archive" | cut -d' ' -f1)
+          printf '%s\n\n`%s`\n\nsha256: `%s`\n\nTry it in zenbot: `zen plugins add ./%s`.\n' \
+            "$name" "$name.tgz" "$sha" "$name.tgz" > notes.md
+          gh release create "$GITHUB_REF_NAME" "$archive" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag

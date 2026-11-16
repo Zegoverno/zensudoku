@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "puzzles": [
+    {
+      "id": "example-classic",
+      "name": "Example — classic",
+      "variant": "classic",
+      "difficulty": "easy",
+      "rating": "Provisional rating, 36 clues: single-candidate steps alone solve it.",
+      "givens": "501070002004100000200540000003400006027650900006839275010368507060790040080000060",
+      "solution": "531976482694182753278543691953427816827651934146839275419368527362795148785214369"
+    }
+  ]
+}

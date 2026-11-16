@@ -1,0 +1,39 @@
+{
+  "name": "zensudoku",
+  "version": "0.1.0",
+  "description": "Sudoku with notes, colors, undo and many variants: a PWA, a zen plugin and an MCP App.",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite --config vite.pwa.config.ts",
+    "build": "npm run build:app && npm run build:pwa && npm run build:server",
+    "build:app": "vite build --config vite.app.config.ts",
+    "build:pwa": "vite build --config vite.pwa.config.ts",
+    "build:server": "vite build --config vite.server.config.ts",
+    "generate": "node scripts/generate-example.ts",
+    "test": "vitest run",
+    "test:e2e": "node tests/e2e.mjs",
+    "test:smoke": "node tests/mcp-smoke.mjs",
+    "check": "svelte-check --tsconfig ./tsconfig.json && vitest run && npm run build && npm run pack && npm run test:pack && npm run test:smoke && npm run test:e2e",
+    "pack": "npm run build:app && npm run build:server && node scripts/pack.mjs",
+    "test:pack": "node tests/pack-test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tsconfig/svelte": "^5.0.8",
+    "@types/node": "^26.6.6",
+    "playwright": "1.64.1",
+    "svelte": "^5.57.3",
+    "svelte-check": "^4.7.7",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.5",
+    "vite-plugin-singlefile": "^2.3.4",
+    "vitest": "^5.0.5"
+  }
+}
