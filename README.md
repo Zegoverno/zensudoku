@@ -60,7 +60,19 @@ build: `zen plugins add ./zensudoku-<version>.tgz` (see Releasing).
 
 zenbot reads `plugin.json`: a game (*Sudoku*, in the **Games** tab), a `/sudoku` command that calls
 `zensudoku_new` (in the web chat, in Matrix and from the `zen` CLI), a coaching skill, and no
-permissions. The board follows zenbot's theme.
+permissions.
+
+The board follows zenbot's host (MCP Apps host context), live:
+
+- **Theme and look**: `theme` (light or dark) and the `--color-*`, `--border-radius-*`, `--font-*` and
+  `--shadow-md` variables set every colour, radius and font; the accent (selection, active mode, notes) is
+  `--color-ring-primary`. Each has a fallback, so the PWA and other hosts look right without them.
+- **Size**: `containerDimensions` (resent on resize) sizes the board. A wide board pane puts the board
+  beside its controls; a phone (390 px) or a narrow side panel gets one column with the board as wide as
+  the container allows, and never a sideways scroll.
+- **Chrome**: when zenbot sends its `zen` context (`pane`, `phone`, `slot`, `headingFont`) it draws the
+  title and the close ×, so the app draws none. `phone` drops the keyboard hints and enlarges touch targets.
+  Hosts without `zen` get the app's own heading.
 
 ## Use it in Claude, ChatGPT or another MCP Apps host
 

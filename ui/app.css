@@ -1,22 +1,38 @@
-/* Theme variables. In a host, its variables win (--color-*); otherwise light or dark by the system. */
+/* Theme. The host's variables (MCP Apps names, --color-*) win; without them (the PWA, or a host that
+   sends fewer) light or dark by the system, or by the host's theme once it says (data-theme).
+   Everything below is named for what the board uses; no component reads a raw colour. */
 :root {
   color-scheme: light dark;
-  --paper-d: #fbfaf7; --ink-d: #1d1d1b; --dim-d: #6b6a64; --faint-d: #d6d3c9; --accent-d: #2d6cdf; --err-d: #c0392b; --warn-d: #b26a00;
+  --paper-d: #faf8f3; --soft-d: #f2efe7; --ink-d: #2a2a26; --dim-d: #6c6a62; --faint-d: #dad6ca;
+  --accent-d: #4c6f43; --accent-ink-d: #fbfaf6; --accent-bg-d: #e3ebdc; --err-d: #b8483b; --ok-d: #3f7a45; --warn-d: #a8680a;
   --paper: var(--color-background-primary, var(--paper-d));
+  --soft: var(--color-background-secondary, var(--soft-d));
   --ink: var(--color-text-primary, var(--ink-d));
   --dim: var(--color-text-secondary, var(--dim-d));
   --faint: var(--color-border-primary, var(--faint-d));
-  --accent: var(--color-text-info, var(--accent-d));
+  --accent: var(--color-ring-primary, var(--color-text-info, var(--accent-d)));
+  --accent-ink: var(--color-text-inverse, var(--accent-ink-d));
+  --accent-bg: var(--color-background-info, var(--accent-bg-d));
   --err: var(--color-text-danger, var(--err-d));
+  --ok: var(--color-text-success, var(--ok-d));
   --warn: var(--color-text-warning, var(--warn-d));
+  --r-sm: var(--border-radius-sm, 4px);
+  --r-md: var(--border-radius-md, 8px);
+  --r-lg: var(--border-radius-lg, 12px);
+  --r-full: var(--border-radius-full, 999px);
+  --shadow: var(--shadow-md, none);
   --sans: var(--font-sans, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif);
+  --mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  --heading: var(--heading-font, var(--sans));
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) { --paper-d: #181817; --ink-d: #ecebe6; --dim-d: #a4a29a; --faint-d: #3b3a36; --accent-d: #7fa8f0; --err-d: #ef7a6f; --warn-d: #e0a040; }
+  :root:not([data-theme='light']) { --paper-d: #1b1c19; --soft-d: #232420; --ink-d: #e9e7df; --dim-d: #a3a198; --faint-d: #3a3b35; --accent-d: #9cc08f; --accent-ink-d: #1b1c19; --accent-bg-d: #2c3a28; --err-d: #ee8174; --ok-d: #8fc796; --warn-d: #e0a853; }
 }
-:root[data-theme='dark'] { --paper-d: #181817; --ink-d: #ecebe6; --dim-d: #a4a29a; --faint-d: #3b3a36; --accent-d: #7fa8f0; --err-d: #ef7a6f; --warn-d: #e0a040; }
+:root[data-theme='dark'] { --paper-d: #1b1c19; --soft-d: #232420; --ink-d: #e9e7df; --dim-d: #a3a198; --faint-d: #3a3b35; --accent-d: #9cc08f; --accent-ink-d: #1b1c19; --accent-bg-d: #2c3a28; --err-d: #ee8174; --ok-d: #8fc796; --warn-d: #e0a853; }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); -webkit-text-size-adjust: 100%; }
+/* Never a sideways scroll: a board that cannot shrink further scrolls inside its own viewport. */
+html, body { overflow-x: hidden; }
 button { font: inherit; color: inherit; background: none; border: 0; }
-/* zenbot's Games tab ([data-slot='game']) draws its own frame and title: no extra margin around the board. */
-:root[data-slot='game'] body { margin: 0; }
+/* zenbot's Games tab ([data-zen]) draws its own frame, title and close: no extra margin around the board. */
+:root[data-zen] body, :root[data-slot='game'] body { margin: 0; }

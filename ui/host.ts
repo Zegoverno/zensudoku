@@ -4,7 +4,9 @@
 // - A tool result from the agent (zensudoku_new) opens that puzzle.
 // - Every change is reported to this server (zensudoku_report, app-only) and to the chat's model
 //   context (updateModelContext), so zensudoku_state and the agent see the board the player sees.
-// - zenbot's host context (zen.slot 'game', zen.pane) is read when present and ignored when not; the theme always follows the host.
+// - The host's theme, CSS variables and container size are followed live. zenbot's own context
+//   (zen: pane, phone, slot, headingFont) is read when present and ignored when not (host-state.svelte.ts);
+//   with it, zenbot draws the title and the close ×, so the app draws none.
 // - Progress is saved in the iframe's localStorage when the sandbox allows it, else kept in memory.
 import { App, applyDocumentTheme, applyHostStyleVariables } from '@modelcontextprotocol/ext-apps';
 import { mount } from 'svelte';
@@ -13,28 +15,25 @@ import Sudoku from './Sudoku.svelte';
 import { browserStorage } from './adapters.ts';
 import type { Snapshot } from './adapters.ts';
 import { createStore } from './state.svelte.ts';
+import { host, readHost } from './host-state.svelte.ts';
 import { choose } from '../core/sudoku-game.ts';
 import { renderGrid, conflictList } from '../core/text.ts';
 import { findPuzzle } from '../core/sudoku.ts';
 
-const app = new App({ name: 'zensudoku', version: '0.1.0' });
+const app = new App({ name: 'zensudoku', version: '0.2.0' });
 const store = createStore(browserStorage());
 
-/** zenbot adds `zen: { pane, path, mode, slot }` to the host context; other hosts send none, so every field is optional. */
-function zenContext(ctx: ReturnType<App['getHostContext']>): { pane?: string; slot?: string } {
-  const zen = (ctx as { zen?: unknown } | undefined)?.zen;
-  return zen && typeof zen === 'object' ? zen as { pane?: string; slot?: string } : {};
-}
-
-/** Follows the host's theme and CSS variables, and records where zenbot shows us (slot 'game', pane 'board' or 'side'). */
+/** Follows the host's theme, CSS variables and size, and records where zenbot shows us. */
 function applyContext(ctx: ReturnType<App['getHostContext']>) {
   if (!ctx) return;
   if (ctx.theme) applyDocumentTheme(ctx.theme);
   if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
-  const { slot, pane } = zenContext(ctx);
+  readHost(ctx);
   const root = document.documentElement;
-  if (typeof slot === 'string') root.dataset.slot = slot; else delete root.dataset.slot;
-  if (typeof pane === 'string') root.dataset.pane = pane; else delete root.dataset.pane;
+  if (host.slot) root.dataset.slot = host.slot; else delete root.dataset.slot;
+  if (host.pane) root.dataset.pane = host.pane; else delete root.dataset.pane;
+  if (host.zen) root.dataset.zen = ''; else delete root.dataset.zen;
+  if (host.headingFont) root.style.setProperty('--heading-font', host.headingFont); else root.style.removeProperty('--heading-font');
 }
 
 let last = '', timer: ReturnType<typeof setTimeout> | undefined;
@@ -60,5 +59,5 @@ app.ontoolresult = result => {
 };
 app.onhostcontextchanged = () => applyContext(app.getHostContext());
 
-mount(Sudoku, { target: document.getElementById('app')!, props: { store, onchange: report } });
+mount(Sudoku, { target: document.getElementById('app')!, props: { store, onchange: report, host } });
 app.connect().then(() => applyContext(app.getHostContext()));
