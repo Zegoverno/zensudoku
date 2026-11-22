@@ -70,6 +70,12 @@ The board follows zenbot's host (MCP Apps host context), live:
 - **Size**: `containerDimensions` (resent on resize) sizes the board. A wide board pane puts the board
   beside its controls; a phone (390 px) or a narrow side panel gets one column with the board as wide as
   the container allows, and never a sideways scroll.
+- **Keyboard**: the board takes part in zenbot's keyboard model (zenbot's `PLUGINS.md`, "Keys and commands"). It declares
+  New game (`n`), Restart, Hint (`h`), Undo (`Mod+z`), Redo (`Mod+Shift+z`) and Toggle notes, which show in zenbot's
+  ring and command list (a command that cannot run now is left out). Inside zenbot those keys are forwarded and zenbot
+  sends the command back, so the owner can rebind them; the board keeps arrows, digits, `v`/`c`/`m`, Delete and Ctrl+Y.
+  Every other keydown goes to zenbot (only Ctrl/Meta ones from the puzzle text box), and the board takes the focus when its panel does.
+  Standalone and in other hosts nothing of this happens and Ctrl+Z, Ctrl+Shift+Z work as above.
 - **Chrome**: when zenbot sends its `zen` context (`pane`, `phone`, `slot`, `headingFont`) it draws the
   title and the close ×, so the app draws none. `phone` drops the keyboard hints and enlarges touch targets.
   Hosts without `zen` get the app's own heading.

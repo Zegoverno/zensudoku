@@ -24,7 +24,7 @@ const VARS = { '--color-background-primary': '#f4f1ea', '--color-background-seco
 const HOST = `<!doctype html><meta charset=utf-8><title>host</title><body style="margin:0"><iframe id=f sandbox="allow-scripts" style="width:560px;height:1100px;border:0"></iframe><script>
 const VARS = ${JSON.stringify(VARS)};
 let ctx = { theme: 'dark', displayMode: 'inline', styles: { variables: VARS }, containerDimensions: { width: 560, height: 1100 }, zen: { pane: 'board', phone: false, slot: 'game', headingFont: 'Georgia, serif' } };
-window.calls = []; window.contexts = []; window.ready = false;
+window.calls = []; window.contexts = []; window.zenmsgs = []; window.ready = false;
 const frame = document.getElementById('f');
 const reply = (id, result) => frame.contentWindow.postMessage({ jsonrpc: '2.0', id, result }, '*');
 addEventListener('message', e => {
@@ -32,12 +32,14 @@ addEventListener('message', e => {
   const m = e.data;
   if (m.method === 'ui/initialize') reply(m.id, { protocolVersion: '2026-01-26', hostInfo: { name: 'test-host', version: '0' }, hostCapabilities: {}, hostContext: ctx });
   else if (m.method === 'ui/notifications/initialized') window.ready = true;
+  else if (m.method && m.method.startsWith('zen/')) window.zenmsgs.push(m);
   else if (m.method === 'tools/call') { window.calls.push(m.params); reply(m.id, { content: [{ type: 'text', text: 'ok' }] }); }
   else if (m.method === 'ui/update-model-context') { window.contexts.push(m.params); reply(m.id, {}); }
   else if (m.id !== undefined) reply(m.id, {});
 });
 window.setContext = patch => { ctx = { ...ctx, ...patch }; frame.contentWindow.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/host-context-changed', params: patch }, '*'); };
 window.resize = (w, h, zen) => { frame.style.width = w + 'px'; frame.style.height = h + 'px'; window.setContext({ containerDimensions: { width: w, height: h }, ...(zen ? { zen: { ...ctx.zen, ...zen } } : {}) }); };
+window.zenSend = (method, params) => frame.contentWindow.postMessage({ jsonrpc: '2.0', method, params }, '*');
 window.sendResult = structuredContent => frame.contentWindow.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: { content: [{ type: 'text', text: 'opened' }], structuredContent } }, '*');
 fetch('/ui.html').then(r => r.text()).then(html => { frame.srcdoc = html; });
 </script>`;
@@ -256,8 +258,73 @@ try {
   await ui.getByRole('button', { name: 'Undo' }).click();
   assert.equal(await ui.locator(`[data-cell="${cell2}"]`).getAttribute('data-value'), '');
 
+  // ---- zenbot's keyboard model: commands declared, keys forwarded, commands run, focus ----
+  const cmds = () => hostPage.evaluate(() => window.zenmsgs.filter(m => m.method === 'zen/commands').at(-1)?.params.commands.map(c => c.id).join(','));
+  // (a bare modifier keydown is forwarded too; the contract says every keydown)
+  const keys = () => hostPage.evaluate(() => window.zenmsgs.filter(m => m.method === 'zen/key').map(m => m.params).filter(k => k.key !== 'Control'));
+  await hostPage.waitForFunction(() => window.zenmsgs.some(m => m.method === 'zen/commands'));
+  const first = await hostPage.evaluate(() => window.zenmsgs.find(m => m.method === 'zen/commands').params.commands);
+  // one bundled puzzle: nothing to start, so "New game" is not declared; the rest is, with zenbot's key forms
+  assert.deepEqual(first.filter(c => c.ring).map(c => c.id), ['restart', 'hint']);
+  assert.deepEqual(first.map(c => [c.id, c.key]).filter(([, k]) => k), [['hint', 'h']]);
+  assert.deepEqual(first.map(c => c.id), ['restart', 'hint', 'toggle-notes']);
+  // the entered puzzle makes another one available: New game (n) joins, first in the ring
+  const latest = await hostPage.evaluate(() => window.zenmsgs.filter(m => m.method === 'zen/commands').at(-1).params.commands);
+  assert.deepEqual(latest.slice(0, 2).map(c => [c.id, c.key, c.ring]), [['new-game', 'n', true], ['restart', undefined, true]]);
+  // availability changes are sent again: after the Undo click above, Redo is available and Undo is not
+  assert.match(await cmds(), /redo/);
+  assert.doesNotMatch(await cmds(), /undo/);
+  await ui.locator(`[data-cell="${cell2}"]`).click();
+  await ui.locator(`[data-cell="${cell2}"]`).press('4');
+  await hostPage.waitForFunction(() => window.zenmsgs.filter(m => m.method === 'zen/commands').at(-1).params.commands.some(c => c.id === 'undo' && c.key === 'Mod+z' && c.ring));
+  // declared keys are only forwarded under zenbot, never acted on: Ctrl+Z, n and h leave the board alone
+  await hostPage.evaluate(() => { window.zenmsgs.length = 0; });
+  await ui.locator(`[data-cell="${cell2}"]`).press('Control+z');
+  await ui.locator(`[data-cell="${cell2}"]`).press('n');
+  await ui.locator(`[data-cell="${cell2}"]`).press('h');
+  await hostPage.waitForFunction(() => window.zenmsgs.filter(m => m.method === 'zen/key').length >= 3);
+  assert.equal(await ui.locator(`[data-cell="${cell2}"]`).getAttribute('data-value'), '4', 'Ctrl+Z is the host\'s, not the board\'s');
+  assert.equal(await ui.locator('[data-testid="hint"]').textContent(), '', 'h is the host\'s');
+  assert.match(await ui.locator('.info strong').textContent(), /Entered puzzle/, 'n is the host\'s');
+  assert.deepEqual((await keys()).map(k => [k.key, k.ctrl, k.typing]), [['z', true, false], ['n', false, false], ['h', false, false]]);
+  // the board's own keys (digits, arrows, v/c/m) are not forwarded
+  await hostPage.evaluate(() => { window.zenmsgs.length = 0; });
+  await ui.locator(`[data-cell="${cell2}"]`).press('5');
+  await ui.locator(`[data-cell="${cell2}"]`).press('c');
+  await ui.locator(`[data-cell="${cell2}"]`).press('ArrowRight');
+  assert.equal(await ui.locator(`[data-cell="${cell2}"]`).getAttribute('data-value'), '5');
+  assert.equal(await ui.getByRole('button', { name: 'Corner', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.deepEqual(await keys(), []);
+  // inside a text field only Ctrl/Meta keys are forwarded, with typing: true
+  await ui.getByText('Enter a puzzle', { exact: true }).click();
+  await ui.locator('textarea').click();
+  await ui.locator('textarea').press('n');
+  await ui.locator('textarea').press('Control+k');
+  await hostPage.waitForFunction(() => window.zenmsgs.some(m => m.method === 'zen/key'));
+  assert.deepEqual((await keys()).map(k => [k.key, k.ctrl, k.typing]), [['k', true, true]]);
+  // zen/command runs the action; zen/focus puts the focus on the board
+  await ui.getByRole('button', { name: 'Value', exact: true }).click();
+  await hostPage.evaluate(() => window.zenSend('zen/command', { id: 'undo' }));
+  await ui.locator(`[data-cell="${cell2}"][data-value="4"]`).waitFor();
+  await hostPage.evaluate(() => window.zenSend('zen/command', { id: 'redo' }));
+  await ui.locator(`[data-cell="${cell2}"][data-value="5"]`).waitFor();
+  await hostPage.evaluate(() => window.zenSend('zen/command', { id: 'toggle-notes' }));
+  await ui.getByRole('button', { name: 'Corner', exact: true }).and(ui.locator('[aria-pressed="true"]')).waitFor();
+  await hostPage.evaluate(() => window.zenSend('zen/command', { id: 'toggle-notes' }));
+  await ui.getByRole('button', { name: 'Value', exact: true }).and(ui.locator('[aria-pressed="true"]')).waitFor();
+  await hostPage.evaluate(() => window.zenSend('zen/command', { id: 'hint' }));
+  await ui.locator('[data-testid="hint"]:not(:empty)').waitFor();
+  await hostPage.evaluate(() => window.zenSend('zen/command', { id: 'restart' }));
+  await ui.locator(`[data-cell="${cell2}"]`).and(ui.locator('[data-value=""]')).waitFor();
+  await hostPage.evaluate(() => window.zenSend('zen/command', { id: 'new-game' }));  // one puzzle only: nothing to open, no error
+  await ui.locator('textarea').click();
+  await hostPage.evaluate(() => window.zenSend('zen/focus', { focused: false }));
+  assert.equal(await ui.locator('[data-cell]:focus').count(), 0);
+  await hostPage.evaluate(() => window.zenSend('zen/focus', { focused: true }));
+  await ui.locator('[data-cell]:focus').waitFor();
+
   assert.deepEqual(errors.filter(e => !/localStorage|Failed to read the 'localStorage'|SecurityError|sandbox/i.test(e)), [], 'no page errors');
-  console.log('e2e ok: PWA (play, undo, notes, reload, hint, enter, offline, solve) and MCP App (handshake, result, report)');
+  console.log('e2e ok: PWA (play, undo, notes, reload, hint, enter, offline, solve) and MCP App (handshake, result, report, zen keys and commands)');
 } finally {
   await browser.close();
   http.close();

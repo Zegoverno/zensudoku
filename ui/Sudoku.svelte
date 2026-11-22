@@ -12,8 +12,12 @@
   import { typing } from './keys.ts';
   import { host as idle } from './host-state.svelte.ts';
   import type { HostView } from './host-state.svelte.ts';
-  /** `store` keeps the game and saves it; `onchange` tells a host about the open board after every change; `host` is what the host says about the container (the PWA gives none). */
-  let { store, onchange, host = idle }: { store: Store; onchange?: (s: Snapshot) => void; host?: HostView } = $props();
+  import { shouldForward } from './zen-keys.ts';
+  import type { Avail, CommandId } from './zen-keys.ts';
+  /** `store` keeps the game and saves it; `onchange` tells a host about the open board after every change; `host` is what the host says about the container (the PWA gives none).
+   *  Under zenbot (`host.zen`): `oncommands` gets what the board can do whenever that changes, `onkey` the keys the board did not handle
+   *  (the host runs the commands bound to them and calls `run`), and the board's own Ctrl+Z / Ctrl+Shift+Z are left to the host's Undo / Redo. */
+  let { store, onchange, host = idle, oncommands, onkey }: { store: Store; onchange?: (s: Snapshot) => void; host?: HostView; oncommands?: (a: Avail) => void; onkey?: (e: KeyboardEvent, typing: boolean) => void } = $props();
   const game = $derived(store.game);
   const save = () => store.save();
 
@@ -65,14 +69,37 @@
   const setMode = (m: Mode) => { game.mode = m; save(); };
   const pickFilter = (variant: Variant | 'all', difficulty: Difficulty | 'all') => { setFilters(game, variant, difficulty); save(); };
   function open(id: string) { choose(game, id); save(); }
+  /** Runs a command zenbot picked (or its key): the same actions as the buttons. */
+  export function run(id: CommandId) {
+    if (id === 'new-game') act(next(game));
+    else if (id === 'restart') act(reset(game));
+    else if (id === 'hint') { if (!done) askHint(); }
+    else if (id === 'undo') act(undo(game));
+    else if (id === 'redo') act(redo(game));
+    else if (id === 'toggle-notes') setMode(game.mode === 'value' ? 'corner' : 'value');
+  }
+  /** Puts the keyboard focus on the board: the selected cell. */
+  export function focusBoard() { grid?.querySelector<HTMLButtonElement>(`[data-cell="${board.selected}"]`)?.focus(); }
+  const avail = $derived<Avail>({
+    next: canNext, hint: !done, notes: !done,
+    undo: (game.history[puzzle.id]?.undo.length ?? 0) > 0, redo: (game.history[puzzle.id]?.redo.length ?? 0) > 0,
+  });
+  $effect(() => { if (host.zen) oncommands?.({ ...avail }); });
   function key(e: KeyboardEvent) {
-    if (e.defaultPrevented || e.isComposing || typing(e) || e.target instanceof HTMLSelectElement) return;
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && ['z', 'y'].includes(e.key.toLowerCase())) {
+    if (e.defaultPrevented || e.isComposing) return;
+    const inField = typing(e), blocked = inField || e.target instanceof HTMLSelectElement;
+    if (!blocked && handle(e)) { e.preventDefault(); return; }
+    // Under zenbot, every key the board did not use goes to the host, which owns the declared shortcuts.
+    if (host.zen && shouldForward(e, blocked)) onkey?.(e, inField);
+  }
+  /** The board's own keys; true when it used the key. */
+  function handle(e: KeyboardEvent): boolean {
+    if (!host.zen && (e.ctrlKey || e.metaKey) && !e.altKey && ['z', 'y'].includes(e.key.toLowerCase())) {
       act(e.key.toLowerCase() === 'y' || e.shiftKey ? redo(game) : undo(game));
-      e.preventDefault();
-      return;
+      return true;
     }
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (host.zen && (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'y') { act(redo(game)); return true; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return false;
     const moves: Record<string, [number,number]> = { ArrowLeft: [0,-1], ArrowRight: [0,1], ArrowUp: [-1,0], ArrowDown: [1,0] };
     const digit = /^Digit([1-9])$/.exec(e.code)?.[1];
     if (e.key in moves) select(moveCell(puzzle, board.selected, ...moves[e.key]), true);
@@ -82,8 +109,8 @@
     else if (e.key === 'v') setMode('value');
     else if (e.key === 'c') setMode('corner');
     else if (e.key === 'm') setMode('center');
-    else return;
-    e.preventDefault();
+    else return false;
+    return true;
   }
   function arrowHead(a:[number,number], b:[number,number]): string {
     const dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy),x=dx/len*.2,y=dy/len*.2;

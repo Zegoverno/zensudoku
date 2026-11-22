@@ -1,2 +1,2 @@
 import { defineConfig } from 'vitest/config';
-export default defineConfig({ test: { include: ['core/**/*.test.ts', 'mcp/**/*.test.ts'] } });
+export default defineConfig({ test: { include: ['core/**/*.test.ts', 'mcp/**/*.test.ts', 'ui/**/*.test.ts'] } });
