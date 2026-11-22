@@ -39,7 +39,7 @@ const summary = (d: ReturnType<typeof describe>) =>
 
 /** `loadHtml` returns the built UI; the default reads ui/dist/index.html next to this server's build. */
 export function createServer(loadHtml: () => string = defaultHtml): McpServer {
-  const server = new McpServer({ name: 'zensudoku', version: '0.2.0' });
+  const server = new McpServer({ name: 'zensudoku', version: '0.3.0' });
 
   registerAppResource(server, 'Sudoku board', UI_URI, {
     description: 'The Sudoku board: notes, colors, undo, hints.',

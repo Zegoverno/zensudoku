@@ -1,6 +1,6 @@
 {
   "name": "zensudoku",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Sudoku with notes, colors, undo and many variants: a PWA, a zen plugin and an MCP App.",
   "license": "MIT",
   "type": "module",
