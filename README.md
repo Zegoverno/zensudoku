@@ -58,19 +58,31 @@ undo and redo and saved progress work as for any puzzle. The side panel shows th
 and **Watch the solution** when the puzzle names a video. What zensudoku checks:
 
 - repeats in rows, columns and regions, always;
-- with a solution in the puzzle, the board against it;
-- with no drawing beyond regions and shading, and the classic rules leaving only a few solutions (a "pick your
-  difficulty" cell, say), any full board without repeats is solved, and **Hint** works as on a classic puzzle;
-- otherwise a full board without repeats says *Board full, no repeats. The variant rules can't be checked here:
-  compare with the solution video.* zensudoku does not enforce free-text variant rules, so it has no solving hints for these.
+- with a complete answer key in the puzzle, the board against it;
+- for recognized classic boards without extra written rules, a full board that passes the rules is solved;
+- when the app cannot verify all rules, a full board can be marked solved only after you explicitly confirm it.
+  Check the puzzle rules or the solution yourself first.
 
 In the PWA, **Import a SudokuPad puzzle** takes a source, keeps it on this device and lists it under **Puzzles**.
+
+## Timer and records
+
+**Time** counts while the puzzle is visible and stops on completion. It pauses while the picker is open,
+when the page is hidden or when you leave; reopening resumes from the saved elapsed time. **Best** is the
+fastest completed timed attempt for that puzzle. **Restart** clears the grid, undo history and current timer,
+but keeps the solved badge and best time. Earlier progress without timing cannot set a best time; restart
+to begin a fully timed attempt.
+
+The PWA saves in your current browser profile. In zenbot, the timer and record use the same plugin data
+as the board; use one active game view at a time. If the host abruptly removes the frame before a final
+save, only the last saved checkpoint can be recovered.
 
 ## The local library
 
 **Puzzles** (or `l`) brings together built-ins, entered/imported puzzles, and in zenbot the plugin's local data folder, `$ZEN_PLUGIN_DATA/library/`
 (for zenbot, `~/.zenbot/plugin-data/zensudoku/library/`), grouped by collection, searchable by number, title or
-author or tag, with ✓ for solved and • for started on this device. Put each puzzle in any subfolder as
+author or tag, with ✓ for solved and • for started. Filter by variant, difficulty or All/Solved/Unsolved.
+Put each puzzle in any subfolder as
 
 - `<name>.json`: `{"id": "…", "source": "…", "collection": "…", "number": "…", "title": "…", "author": "…", "video": "https://…", "link": "https://…"}`;
   only `id` (letters, digits, `.`, `_`, `-`) and `source` are required. Optional filters use `difficulty`

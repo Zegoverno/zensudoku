@@ -313,9 +313,20 @@ try {
 
   // solving the example by hand ends in a locked, celebrated board
   const fresh = await browser.newContext({ viewport: { width: 430, height: 1000 } });
+  await fresh.addInitScript(() => {
+    let monotonic = 0, hidden = false;
+    Object.defineProperty(performance, 'now', { value: () => monotonic });
+    Object.defineProperty(document, 'hidden', { get: () => hidden });
+    window.timerAdvance = ms => { monotonic += ms; };
+    window.timerHidden = value => {
+      hidden = value;
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+  });
   const p2 = await fresh.newPage();
   await p2.goto(base);
   await p2.waitForSelector('.grid');
+  await p2.evaluate(() => window.timerAdvance(12_000));
   for (let i = 0; i < 81; i++) {
     if (catalog.givens[i] !== '0') continue;
     await p2.locator(`[data-cell="${i}"]`).click();
@@ -323,6 +334,70 @@ try {
   }
   assert.match(await p2.locator('.progress [role=status]').textContent(), /Puzzle complete/);
   await shot(p2, 'pwa-solved');
+  const elapsed = p2.getByTestId('elapsed'), best = p2.getByTestId('best');
+  assert.equal(await elapsed.textContent(), '0:12');
+  assert.equal(await best.textContent(), '0:12');
+  await p2.evaluate(() => window.timerAdvance(100_000));
+  await p2.getByRole('button', { name: 'Puzzles' }).click();
+  assert.equal(await elapsed.textContent(), '0:12', 'completed attempt stays frozen');
+  const statusFilter = p2.getByLabel('Status', { exact: true });
+  await statusFilter.selectOption('solved');
+  const solvedRow = p2.getByRole('option', { name: /Example.*Solved/ });
+  assert.equal(await solvedRow.count(), 1);
+  await p2.getByRole('combobox', { name: 'Search puzzles' }).fill('no matching puzzle');
+  assert.equal(await solvedRow.count(), 0);
+  await p2.getByRole('combobox', { name: 'Search puzzles' }).fill('');
+  await p2.getByLabel('Variant', { exact: true }).selectOption('killer');
+  assert.equal(await solvedRow.count(), 0);
+  await p2.getByLabel('Variant', { exact: true }).selectOption('all');
+  await statusFilter.selectOption('unsolved');
+  assert.equal(await p2.locator('[data-id="example-classic"]').count(), 0);
+  await statusFilter.selectOption('solved');
+  await p2.setViewportSize({ width: 390, height: 844 });
+  await shot(p2, 'timer-picker-phone-390');
+  await p2.getByRole('button', { name: 'Close puzzle picker' }).click();
+  await shot(p2, 'timer-board-phone-390');
+  await p2.setViewportSize({ width: 1100, height: 900 });
+  await shot(p2, 'timer-board-desktop');
+  await p2.getByRole('button', { name: 'Restart', exact: true }).click();
+  assert.equal(await elapsed.textContent(), '0:00');
+  assert.equal(await best.textContent(), '0:12');
+  await p2.evaluate(() => {
+    window.timerAdvance(4000);
+    window.timerHidden(true);
+    window.timerAdvance(60_000);
+    window.timerHidden(false);
+  });
+  assert.equal(await elapsed.textContent(), '0:04');
+  await p2.reload();
+  assert.equal(await elapsed.textContent(), '0:04');
+  assert.equal(await best.textContent(), '0:12');
+  await p2.getByRole('button', { name: 'Puzzles' }).click();
+  await statusFilter.selectOption('solved');
+  assert.equal(await solvedRow.count(), 1, 'solved status persists through restart and reload');
+  await p2.getByRole('button', { name: 'Close puzzle picker' }).click();
+
+  await p2.getByText('Import a SudokuPad puzzle', { exact: true }).click();
+  await p2.getByRole('textbox', { name: 'SudokuPad source' }).fill(LINE_SCL);
+  await p2.getByRole('button', { name: 'Import', exact: true }).click();
+  await p2.locator('.grid.pad').waitFor();
+  await p2.evaluate(() => window.timerAdvance(9000));
+  const solution4 = '1234341221434321';
+  for (const i of [2,3,4,5,6,9,11,12,13,14]) {
+    const input = p2.locator(`[data-cell="${i}"]`);
+    await input.click();
+    await input.press(solution4[i]);
+  }
+  assert.equal(await best.textContent(), '—');
+  await p2.getByRole('button', { name: 'Mark solved' }).click();
+  await p2.getByRole('button', { name: 'Cancel', exact: true }).click();
+  assert.equal(await best.textContent(), '—');
+  await p2.getByRole('button', { name: 'Mark solved' }).click();
+  await p2.getByRole('button', { name: 'Confirm solved' }).click();
+  assert.equal(await best.textContent(), '0:09');
+  await p2.reload();
+  assert.equal(await best.textContent(), '0:09');
+
   await fresh.close();
   await context.close();
 
@@ -666,6 +741,34 @@ try {
     assert.equal(await libCell.getAttribute('data-color'), '5');
     assert.match(await libCell.getAttribute('class'), /selected/);
     assert.equal(saved().boards[builtin.id].cells[builtinCell], 3);
+
+    await libCell.press("v");
+    for (const i of [2,3,4,5,6,9,11,12,13,14]) {
+      const input = board.locator(`[data-cell="${i}"]`);
+      await input.click();
+      await input.press(solution4[i]);
+    }
+    await board.getByText('Beautifully done. Puzzle complete!').waitFor();
+    await persisted.waitForFunction(() => window.calls.some(c => {
+      const g = c.arguments.save && JSON.parse(c.arguments.save.game);
+      return g?.boards['lib-resume-test']?.play.solved;
+    }));
+    for (let i = 0; i < 50 && !saved().boards['lib-resume-test'].play.solved; i++) await new Promise(r => setTimeout(r, 20));
+    const recorded = saved().boards['lib-resume-test'].play;
+    assert.ok(recorded.finished && recorded.bestMs > 0 && recorded.bestMs === recorded.elapsedMs);
+    const other = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    watch(other);
+    await other.exposeFunction('liveTools', params => plugin.callTool(params));
+    await other.goto(base + '/host.html');
+    await other.evaluate(() => window.resize(390, 844, { phone: true }));
+    const otherBoard = other.frameLocator('#f');
+    await otherBoard.getByText('Beautifully done. Puzzle complete!').waitFor();
+    assert.equal(await otherBoard.getByTestId('best').textContent(), await board.getByTestId('best').textContent());
+    await shot(other, 'timer-zen-phone-390');
+    await otherBoard.getByRole('button', { name: 'Puzzles' }).click();
+    await otherBoard.getByLabel('Status', { exact: true }).selectOption('solved');
+    await otherBoard.getByRole('option', { name: /Synthetic library.*Solved/ }).waitFor();
+    await other.close();
 
     // Explicit request arriving during hydration wins, and its import survives a server restart.
     const requested = await plugin.callTool({ name: 'zensudoku_new', arguments: { puzzle: LINE_SCL } });

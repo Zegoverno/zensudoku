@@ -165,6 +165,14 @@ export function verdict(cells: number[], p: Rules = CLASSIC): Verdict {
 }
 const activeCellsOf = (p: Rules) => p.pad ? p.pad.active : Array.from({ length: sizeOf(p) }, (_, i) => i).filter(i => isActive(p, i));
 export const complete = (cells: number[], p: Rules = CLASSIC) => verdict(cells, p) === 'solved';
+// Play records require stronger evidence than a wildcard answer key or the
+// SudokuPad classic-geometry heuristic when additional rules are written out.
+export function playVerdict(cells: number[], p: Puzzle): Verdict {
+  const result = verdict(cells, p), pad = p.pad;
+  if (result !== 'solved' || !pad) return result;
+  if (pad.solution) return pad.active.some(i => pad.solution![i] < 0) ? (verdict(cells, { ...p, pad: { ...pad, solution: null } }) === 'open' ? 'open' : 'full') : 'solved';
+  return pad.rules.every(rule => /^(normal|standard|classic) sudoku rules apply\.?$/i.test(rule.trim())) ? 'solved' : 'full';
+}
 /** Entries that are not the solution's (a count; 0 when the solution is not known). A SudokuPad cell meant to stay empty counts too. */
 export function wrongEntries(cells: number[], p: Puzzle): number {
   const sol = p.pad ? p.pad.solution : p.solution;

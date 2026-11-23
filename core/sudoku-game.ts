@@ -1,7 +1,9 @@
 // A Sudoku game's state and what the player can do to it: values, corner and center notes, colors,
 // undo/redo and per-puzzle progress; plus saving and validated restore. Pure functions over a
 // plain object (ui/state.svelte.ts makes it reactive), so tests need no DOM.
-import { CATALOG, complete, filtered, findPuzzle, nextPuzzle, DIFFICULTIES, VARIANTS } from './sudoku.ts';
+import { CATALOG, playVerdict, filtered, findPuzzle, nextPuzzle, DIFFICULTIES, VARIANTS } from './sudoku.ts';
+import { finishAttempt, newPlayTime, restorePlayTime } from './play-time.ts';
+import type { PlayTime } from './play-time.ts';
 import type { Difficulty, Puzzle, Variant } from './sudoku.ts';
 import { activeCells, digitsOf, geometryUnits, isActive, sizeOf } from './sudoku-extra.ts';
 
@@ -12,7 +14,7 @@ export const MAX_HISTORY = 500;
 const MAX_BOARDS = 500;
 
 /** A bit per number 1–9 (bit n−1) in `corner` and `center`; `colors` 0 is none, 1–6 index COLORS. */
-export interface Board { cells: number[]; corner: number[]; center: number[]; colors: number[]; selected: number }
+export interface Board { cells: number[]; corner: number[]; center: number[]; colors: number[]; selected: number; play: PlayTime }
 export interface CellState { v: number; c: number; m: number; k: number }
 export interface Edit { i: number; before: CellState; after: CellState }
 export interface History { undo: Edit[][]; redo: Edit[][] }
@@ -33,9 +35,9 @@ export const bit = (n: number) => 1 << (n - 1);
 export const notesOf = (mask: number): number[] => [1, 2, 3, 4, 5, 6, 7, 8, 9].filter(n => mask & bit(n));
 
 export function blankBoard(p: Puzzle): Board {
-  return { cells: [...p.givens], corner: Array(sizeOf(p)).fill(0), center: Array(sizeOf(p)).fill(0), colors: Array(sizeOf(p)).fill(0), selected: activeCells(p)[0] ?? 0 };
+  return { cells: [...p.givens], corner: Array(sizeOf(p)).fill(0), center: Array(sizeOf(p)).fill(0), colors: Array(sizeOf(p)).fill(0), selected: activeCells(p)[0] ?? 0, play: newPlayTime() };
 }
-const isBlank = (b: Board, p: Puzzle) => b.cells.every((n, i) => n === p.givens[i]) && !b.corner.some(Boolean) && !b.center.some(Boolean) && !b.colors.some(Boolean);
+const isBlank = (b: Omit<Board, 'play'>, p: Puzzle) => b.cells.every((n, i) => n === p.givens[i]) && !b.corner.some(Boolean) && !b.center.some(Boolean) && !b.colors.some(Boolean);
 
 export function newGame(p: Puzzle = CATALOG[0]): Game {
   return { puzzleId: p.id, mode: 'value', variant: 'all', difficulty: 'all', autoClear: true, boards: { [p.id]: blankBoard(p) }, history: {} };
@@ -47,7 +49,26 @@ export function boardOf(g: Game): Board {
 }
 /** The open board without creating it (safe where state must not change, such as a derived value). */
 export const peekBoard = (g: Game): Board => g.boards[puzzleOf(g).id] ?? blankBoard(puzzleOf(g));
-export const isDone = (g: Game) => complete(peekBoard(g).cells, puzzleOf(g));
+export const isDone = (g: Game) => {
+  const b = peekBoard(g);
+  return b.play.finished || playVerdict(b.cells, puzzleOf(g)) === 'solved';
+};
+/** A confirmation is accepted only for a board the validator cannot fully check. */
+export function completeAttempt(g: Game, confirmed = false): boolean {
+  const b = boardOf(g), result = playVerdict(b.cells, puzzleOf(g));
+  if (result !== 'solved' && !(confirmed && result === 'full')) return false;
+  if (!finishAttempt(b.play)) return false;
+  delete g.history[g.puzzleId];
+  return true;
+}
+/** New timed attempt from the givens. A previous solution and best time are kept. */
+export function restart(g: Game): void {
+  const p = puzzleOf(g), { solved, bestMs } = boardOf(g).play;
+  const b = blankBoard(p);
+  Object.assign(b.play, { solved, bestMs });
+  g.boards[p.id] = b;
+  delete g.history[p.id];
+}
 
 const cellState = (b: Board, i: number): CellState => ({ v: b.cells[i], c: b.corner[i], m: b.center[i], k: b.colors[i] });
 const same = (a: CellState, b: CellState) => a.v === b.v && a.c === b.c && a.m === b.m && a.k === b.k;
@@ -171,7 +192,7 @@ export function serialize(g: Game): string {
   const boards: Record<string, Board> = {};
   for (const [id, b] of Object.entries(g.boards)) {
     const p = findPuzzle(id);
-    if (p && (id === g.puzzleId || !isBlank(b, p))) boards[id] = b;
+    if (p && (id === g.puzzleId || b.play.solved || b.play.elapsedMs || !isBlank(b, p))) boards[id] = b;
   }
   return JSON.stringify({ version: 1, puzzleId: g.puzzleId, mode: g.mode, variant: g.variant, difficulty: g.difficulty, autoClear: g.autoClear, boards });
 }
@@ -187,7 +208,8 @@ function validBoard(x: any, p: Puzzle): Board | null {
     if (p.givens[i] && x.cells[i] !== p.givens[i]) return null;
     if (x.cells[i] && (x.corner[i] || x.center[i])) return null;
   }
-  return { cells: [...x.cells], corner: [...x.corner], center: [...x.center], colors: [...x.colors], selected: x.selected };
+  const b = { cells: [...x.cells], corner: [...x.corner], center: [...x.center], colors: [...x.colors], selected: x.selected };
+  return { ...b, play: restorePlayTime(x.play, !isBlank(b, p), playVerdict(b.cells, p) === 'solved') };
 }
 
 /** A saved game. Null when the text is not one; boards that do not hold up are dropped, the rest kept. */
