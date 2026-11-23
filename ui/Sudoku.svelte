@@ -4,12 +4,14 @@
   import type { Snapshot } from './adapters.ts';
   import { CATALOG, CUSTOM_PREFIX, DIFFICULTIES, VARIANTS, VARIANT_LABEL, VARIANT_RULE, clueList, complete, customPuzzle, filtered, findPuzzle, gridText, hintable, padPuzzle, related, verdict, violations } from '../core/sudoku.ts';
   import type { Difficulty, Puzzle, Variant } from '../core/sudoku.ts';
-  import { COLORS, MODES, bit, choose, enter, erase, isDone, next, notesOf, peekBoard, puzzleOf, redo, reset, select as selectCell, setColor, setFilters, toggleNote, undo } from '../core/sudoku-game.ts';
+  import { COLORS, MODES, bit, choose, enter, erase, isDone, next, notesOf, peekBoard, puzzleOf, redo, reset, select as selectCell, setAutoClear, setColor, setFilters, toggleNote, undo } from '../core/sudoku-game.ts';
   import type { Mode } from '../core/sudoku-game.ts';
   import { hint as nextHint } from '../core/hint.ts';
   import { arrowPoints, cageEdges, centre, thermoPoints } from '../core/sudoku-draw.ts';
   import { activeCells, coord, digitsOf, geometryUnits, moveCell, widthOf } from '../core/sudoku-extra.ts';
   import PadDrawing from './PadDrawing.svelte';
+  import Helper from './Helper.svelte';
+  import { cageOf } from '../core/calc.ts';
   import LibraryPicker from './LibraryPicker.svelte';
   import type { LibraryItem, LibraryList, LibrarySource } from './adapters.ts';
   import { typing } from './keys.ts';
@@ -31,6 +33,9 @@
 
   const puzzle = $derived(puzzleOf(game));
   const board = $derived(peekBoard(game));
+  const selectedCage = $derived(cageOf(puzzle, board.selected));
+  const helperCage = $derived(selectedCage ? { sum: selectedCage.sum, size: selectedCage.cells.length, placed: selectedCage.cells.map(i => board.cells[i]).filter(Boolean) } : null);
+  function toggleAutoClear() { setAutoClear(game, !game.autoClear); save(); }
   const rules = $derived(violations(board.cells, puzzle));
   const bad = $derived(new Set(rules.flatMap(v => v.cells)));
   const done = $derived(isDone(game));
@@ -91,6 +96,7 @@
     else if (id === 'undo') act(undo(game));
     else if (id === 'redo') act(redo(game));
     else if (id === 'toggle-notes') setMode(game.mode === 'value' ? 'corner' : 'value');
+    else if (id === 'toggle-auto-clear') toggleAutoClear();
     else if (id === 'library') openPicker();
   }
   /** Puts the keyboard focus on the board: the selected cell. */
@@ -102,7 +108,7 @@
   $effect(() => { if (host.zen) oncommands?.({ ...avail }); });
   function key(e: KeyboardEvent) {
     if (e.defaultPrevented || e.isComposing) return;
-    const inField = typing(e), blocked = inField || e.target instanceof HTMLSelectElement;
+    const inField = typing(e), blocked = inField || (e.target instanceof HTMLElement && (e.target.matches('select') || !!e.target.closest('.helper-controls, .auto-clear')));
     if (!blocked && handle(e)) { e.preventDefault(); return; }
     // Under zenbot, every key the board did not use goes to the host, which owns the declared shortcuts.
     if (host.zen && shouldForward(e, blocked)) onkey?.(e, inField);
@@ -369,6 +375,13 @@
     <button class="action" onclick={askHint}>Hint</button>
     <span role="status" data-testid="hint">{hintText}</span>
   </div>
+  <label class="auto-clear"><input type="checkbox" role="switch" checked={game.autoClear} onchange={toggleAutoClear} /> Auto-clear notes</label>
+  {#if !host.zen}
+    <details class="helper-controls enter" open={!!helperCage}>
+      <summary>Sudoku helper</summary>
+      <Helper digits={digitsOf(puzzle)} cell={coord(puzzle, board.selected)} cage={helperCage} />
+    </details>
+  {/if}
   <details class="enter">
     <summary>Enter a puzzle</summary>
     <p>Paste 81 characters, row by row: digits 1–9, and . or 0 for a blank. It must have exactly one solution.</p>
@@ -396,6 +409,8 @@
 </div>
 
 <style>
+  .auto-clear { display: flex; align-items: center; gap: 6px; font-size: .85rem; }
+  .auto-clear input { accent-color: var(--accent); width: 18px; height: 18px; }
   .games { --c1: #e5534b; --c2: #f09a3e; --c3: #e6c93a; --c4: #4fae6a; --c5: #4a8fe0; --c6: #9b6bd6;
     --pad: 20px; width: min(100%, 520px); margin: 0 auto; padding: calc(var(--pad) + 4px) var(--pad); box-sizing: border-box; color: var(--ink); }
   /* Wide (a board pane): the board beside its controls. */

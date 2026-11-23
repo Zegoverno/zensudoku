@@ -12,12 +12,13 @@ describe('commandList', () => {
       { id: 'undo', title: 'Undo', key: 'Mod+z', ring: true },
       { id: 'redo', title: 'Redo', key: 'Mod+Shift+z' },
       { id: 'toggle-notes', title: 'Toggle notes' },
+      { id: 'toggle-auto-clear', title: 'Toggle auto-clear notes' },
       { id: 'library', title: 'Library', key: 'l' },
     ]);
   });
   it('leaves out what cannot run now, keeps restart', () => {
     const ids = commandList({ next: false, hint: false, notes: false, undo: false, redo: true, library: false }).map(c => c.id);
-    expect(ids).toEqual(['restart', 'redo']);
+    expect(ids).toEqual(['restart', 'redo', 'toggle-auto-clear']);
   });
   it('respects the contract: id, title, key shapes, at most four ring commands', () => {
     const list = commandList(all);
