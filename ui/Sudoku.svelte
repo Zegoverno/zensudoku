@@ -2,16 +2,17 @@
   import { tick } from 'svelte';
   import type { Store } from './state.svelte.ts';
   import type { Snapshot } from './adapters.ts';
-  import { CATALOG, CUSTOM_PREFIX, DIFFICULTIES, VARIANTS, VARIANT_LABEL, VARIANT_RULE, clueList, complete, customPuzzle, filtered, findPuzzle, gridText, hintable, padPuzzle, related, verdict, violations } from '../core/sudoku.ts';
-  import type { Difficulty, Puzzle, Variant } from '../core/sudoku.ts';
-  import { COLORS, MODES, bit, choose, enter, erase, isDone, next, notesOf, peekBoard, puzzleOf, redo, reset, select as selectCell, setAutoClear, setColor, setFilters, toggleNote, undo } from '../core/sudoku-game.ts';
+  import { CATALOG, CUSTOM_PREFIX, VARIANT_LABEL, VARIANT_RULE, clueList, complete, customPuzzle, filtered, findPuzzle, gridText, hintable, padPuzzle, related, verdict, violations } from '../core/sudoku.ts';
+  import type { Puzzle } from '../core/sudoku.ts';
+  import { COLORS, MODES, bit, choose, enter, erase, isDone, next, notesOf, peekBoard, puzzleOf, redo, reset, select as selectCell, setAutoClear, setColor, toggleNote, undo } from '../core/sudoku-game.ts';
   import type { Mode } from '../core/sudoku-game.ts';
   import { hint as nextHint } from '../core/hint.ts';
   import { arrowPoints, cageEdges, centre, thermoPoints } from '../core/sudoku-draw.ts';
   import { activeCells, coord, digitsOf, geometryUnits, moveCell, widthOf } from '../core/sudoku-extra.ts';
   import PadDrawing from './PadDrawing.svelte';
   import Helper from './Helper.svelte';
-  import { cageOf } from '../core/calc.ts';
+  import ClueCalc from './ClueCalc.svelte';
+  import { cageOf, sumCages } from '../core/calc.ts';
   import LibraryPicker from './LibraryPicker.svelte';
   import type { LibraryItem, LibraryList, LibrarySource } from './adapters.ts';
   import { typing } from './keys.ts';
@@ -53,7 +54,21 @@
   // Entered puzzles are not catalog entries, but stay reachable after browsing away.
   const entered = $derived(Object.keys(game.boards).map(findPuzzle).filter((p): p is Puzzle => !!p && p.id.startsWith(CUSTOM_PREFIX)));
   const padOpened = $derived(Object.keys(game.boards).map(findPuzzle).filter((p): p is Puzzle => !!p?.pad));
-  const manyVariants = new Set(CATALOG.map(p => p.variant)).size > 1 || new Set(CATALOG.map(p => p.difficulty)).size > 1;
+  let picking = $state(false), libList = $state<LibraryList | null>(null), libError = $state(''), padSource = $state(''), importError = $state('');
+  const pickerList = $derived<LibraryList>({
+    available: libList?.available ?? false, errors: libList?.errors ?? 0,
+    entries: [
+      ...CATALOG.map(p => ({ id: p.id, puzzleId: p.id, title: p.name, collection: 'Built-in', variants: [p.variant], difficulty: p.difficulty ?? undefined })),
+      ...entered.map((p, k) => ({ id: p.id, puzzleId: p.id, title: `${p.name} ${k + 1} · ${p.givens.filter(Boolean).length} clues`, collection: 'Entered puzzles', variants: [p.variant] })),
+      ...padOpened.filter(p => !libList?.entries.some(e => e.puzzleId === p.id)).map(p => ({
+        ...p.library, id: p.library?.id ?? p.id, puzzleId: p.id, title: p.library?.title ?? p.name,
+        author: p.pad!.author, collection: p.library?.collection ?? 'Imported puzzles',
+        variants: p.library?.variants ?? (p.pad!.classic ? ['classic'] as const : undefined),
+      })),
+      ...(libList?.entries ?? []),
+    ],
+  });
+  const cages = $derived(sumCages(puzzle));
   const canNext = $derived(choices.length > 0 && !(choices.length === 1 && choices[0].id === puzzle.id));
   const clues = $derived(clueList(puzzle));
   const hasSandwich = $derived(puzzle.rowSandwich.some(v => v != null) || puzzle.colSandwich.some(v => v != null));
@@ -68,11 +83,14 @@
   // Layout by the container the host reports (px; 0 = unknown, then the board fills its column).
   // Narrow (a phone, a side panel): one column, the board as wide as the container allows and no
   // taller than it. Wide (a board pane): the board on the left, the controls beside it.
-  const compact = $derived(host.phone || (host.width > 0 && host.width < 480));
+  let viewportWidth = $state(0), viewportHeight = $state(0);
+  const viewWidth = $derived(host.width || viewportWidth);
+  const viewHeight = $derived(host.height || viewportHeight);
+  const compact = $derived(host.phone || (viewWidth > 0 && viewWidth < 480));
   const pad = $derived(compact ? 10 : 16);
-  const wide = $derived(!host.phone && host.width >= 760 && host.height >= 380);
+  const wide = $derived(!host.phone && viewWidth >= 760 && viewHeight >= 380);
   const boardPx = $derived.by(() => {
-    const { width: w, height: h } = host;
+    const w = viewWidth, h = viewHeight;
     if (!w) return 0;
     if (wide) return Math.max(320, Math.min((h - 2 * pad) * aspect, w - 2 * pad - 24 - 300, 680));
     const room = w - 2 * pad;
@@ -86,7 +104,6 @@
     if (focus) tick().then(() => grid?.querySelector<HTMLButtonElement>(`[data-cell="${i}"]`)?.focus());
   }
   const setMode = (m: Mode) => { game.mode = m; save(); };
-  const pickFilter = (variant: Variant | 'all', difficulty: Difficulty | 'all') => { setFilters(game, variant, difficulty); save(); };
   function open(id: string) { choose(game, id); save(); }
   /** Runs a command zenbot picked (or its key): the same actions as the buttons. */
   export function run(id: CommandId) {
@@ -102,7 +119,7 @@
   /** Puts the keyboard focus on the board: the selected cell. */
   export function focusBoard() { grid?.querySelector<HTMLButtonElement>(`[data-cell="${board.selected}"]`)?.focus(); }
   const avail = $derived<Avail>({
-    next: canNext, hint: !done && hintable(puzzle), notes: !done, library: !!library,
+    next: canNext, hint: !done && hintable(puzzle), notes: !done, library: true,
     undo: (game.history[puzzle.id]?.undo.length ?? 0) > 0, redo: (game.history[puzzle.id]?.redo.length ?? 0) > 0,
   });
   $effect(() => { if (host.zen) oncommands?.({ ...avail }); });
@@ -130,7 +147,7 @@
     else if (e.key === 'v') setMode('value');
     else if (e.key === 'c') setMode('corner');
     else if (e.key === 'm') setMode('center');
-    else if (e.key === 'l' && !host.zen && library) openPicker();
+    else if (e.key === 'l' && !host.zen) openPicker();
     else return false;
     return true;
   }
@@ -167,13 +184,17 @@
   $effect(() => { puzzle.id; board.cells.join(''); hintText = ''; hintCell = -1; });
 
   // The library picker, and importing a SudokuPad source.
-  let picking = $state(false), libList = $state<LibraryList | null>(null), libError = $state(''), padSource = $state(''), importError = $state('');
+
   function openPicker() {
-    if (!library) return;
+    if (picking) return;
     picking = true; libList = null; libError = '';
-    library.list().then(l => { libList = l; }, () => { libError = 'The library could not be read.'; });
+    library?.list().then(l => { libList = l; }, () => { libError = 'The local library could not be read.'; });
   }
-  function closePicker() { picking = false; tick().then(focusBoard); }
+  let pickerButton: HTMLButtonElement;
+  function closePicker(returnToPicker = false) {
+    picking = false;
+    tick().then(() => returnToPicker ? pickerButton.focus() : focusBoard());
+  }
   /** solved, started (a board with entries) or neither, from this device's saved progress. */
   function mark(item: LibraryItem): '' | 'solved' | 'started' {
     const b = game.boards[item.puzzleId], p = b && findPuzzle(item.puzzleId);
@@ -182,8 +203,8 @@
     return b.cells.some((n, i) => n && !p.givens[i]) || b.corner.some(Boolean) || b.center.some(Boolean) || b.colors.some(Boolean) ? 'started' : '';
   }
   async function pick(item: LibraryItem) {
-    if (!library) return;
     if (!findPuzzle(item.puzzleId)) {
+      if (!library) return;
       const got = await library.source(item).catch(() => 'The puzzle could not be fetched.');
       if (typeof got === 'string') { libError = got; return; }
       const p = padPuzzle(got.source, got.library);
@@ -199,6 +220,10 @@
     store.sources.add({ id: p.id, source });
     importError = ''; padSource = '';
     open(p.id);
+  }
+  function clueTarget(x: number, y: number, w: number, h: number) {
+    const bounds = sp?.bounds ?? { x: 0, y: 0, w: width, h: width };
+    return `left:${(x - bounds.x) / bounds.w * 100}%;top:${(y - bounds.y) / bounds.h * 100}%;width:${w / bounds.w * 100}%;height:${h / bounds.h * 100}%`;
   }
   /** Where a cell's button sits: a grid area on the classic board, a box on a SudokuPad drawing. */
   function place(i: number): string {
@@ -244,30 +269,21 @@
     </button>
 {/snippet}
 
-<svelte:window onkeydown={key} />
+{#snippet cageCalc(c: typeof cages[number], x: number, y: number)}
+  <ClueCalc sum={c.sum} digits={digitsOf(puzzle)} size={c.cells.length} placed={c.cells.map(i => board.cells[i]).filter(Boolean)}
+    label={`Killer cage sum ${c.sum} in ${c.cells.length} cells`} style={clueTarget(x, y, .49, .43)} />
+{/snippet}
+
+<svelte:window onkeydown={key} bind:innerWidth={viewportWidth} bind:innerHeight={viewportHeight} />
 <div class="games" class:samurai={puzzle.variant === 'samurai'} class:wide class:compact class:phone={host.phone} class:zen={host.zen} style:--side={width} style:--pad={`${pad}px`} style:--board={boardPx ? `${boardPx}px` : null}>
   <div class="top">
-  <header>{#if !host.zen}<div><div class="eyebrow">Games</div><h1>Sudoku</h1></div>{/if}<span class="head-actions">{#if library}<button class="action" aria-expanded={picking} onclick={() => (picking ? closePicker() : openPicker())}>Library</button>{/if}<button class="action" disabled={!canNext} onclick={() => act(next(game))}>New puzzle</button></span></header>
-  <div class="filters">
-    {#if manyVariants}
-    <label>Variant<select value={game.variant} onchange={e => pickFilter(e.currentTarget.value as Variant | 'all', game.difficulty)}>
-      <option value="all">All variants</option>{#each VARIANTS as v}<option value={v}>{VARIANT_LABEL[v]}</option>{/each}
-    </select></label>
-    <label>Difficulty<select value={game.difficulty} onchange={e => pickFilter(game.variant, e.currentTarget.value as Difficulty | 'all')}>
-      <option value="all">Any difficulty</option>{#each DIFFICULTIES as d}<option value={d}>{cap(d)}</option>{/each}
-    </select></label>
-    {/if}
-    <label class="wide">Puzzle<select value={puzzle.id} onchange={e => open(e.currentTarget.value)}>
-      {#if !choices.some(c => c.id === puzzle.id) && !puzzle.pad}<option value={puzzle.id}>{puzzle.name}</option>{/if}
-      {#each choices as c}<option value={c.id}>{c.name}{c.difficulty ? ` · ${c.difficulty}` : ''}</option>{/each}
-      {#if padOpened.length}<optgroup label="SudokuPad">{#each padOpened as c}<option value={c.id}>{c.name}</option>{/each}</optgroup>{/if}
-      {#if entered.length}<optgroup label="Entered puzzles">{#each entered as c, k}<option value={c.id}>{c.name} {k + 1} · {c.givens.filter(Boolean).length} clues</option>{/each}</optgroup>{/if}
-    </select></label>
-  </div>
-  {#if !choices.length}<p class="none" role="status">No puzzle has this variant and difficulty yet.</p>{/if}
-  {#if picking}<LibraryPicker list={libList} error={libError} {mark} onpick={pick} onclose={closePicker} />{/if}
+  <header>
+    {#if !host.zen}<div><div class="eyebrow">Games</div><h1>Sudoku</h1></div>{/if}
+    <button class="action puzzle-picker" bind:this={pickerButton} aria-expanded={picking} onclick={() => (picking ? closePicker(true) : openPicker())}>Puzzles <span aria-hidden="true">▾</span></button>
+  </header>
+  {#if picking}<LibraryPicker list={pickerList} loading={!!library && !libList && !libError} error={libError} {mark} onpick={pick} onclose={() => closePicker(true)} />{/if}
   {#if sp}
-    <div class="info" data-testid="pad-info">
+  <div class="info" data-testid="pad-info">
       <div><strong>{puzzle.name}</strong>{#if sp.author} · <span data-testid="author">by {sp.author}</span>{/if}</div>
       {#if puzzle.library?.collection}<div class="rating">{puzzle.library.collection}</div>{/if}
       {#if sp.rules.length}
@@ -289,13 +305,20 @@
     <div class="grid pad" role="group" aria-label="Sudoku board" bind:this={grid} data-overlay="sudokupad"
       style:aspect-ratio={`${sp.bounds.w} / ${sp.bounds.h}`} style:--cw={100 / sp.bounds.w}>
       <PadDrawing pad={sp} />
+      {#each cages as c}
+        {@const at = c.cells[0]}
+        {@render cageCalc(c, at % width + .25, Math.floor(at / width) + .21)}
+      {/each}
+      {#each sp.sandwichClues as t}
+        <ClueCalc sum={Number(t.text)} digits={sp.digits} label={`Sandwich sum ${Number(t.text)}`} style={clueTarget(t.x, t.y, .79, .79)} />
+      {/each}
       {#each activeCellsList as i}{@render cell(i)}{/each}
     </div>
   {:else}
   <div class="frame" class:sandwich={hasSandwich} class:littlekiller={puzzle.variant === 'littlekiller'}>
     {#if hasSandwich}
-      <div class="cluecols">{#each puzzle.colSandwich as s, k}<span role="img" aria-label={s == null ? `Column ${k + 1}: no clue` : `Column ${k + 1} sandwich sum ${s}`}>{s ?? ''}</span>{/each}</div>
-      <div class="cluerows">{#each puzzle.rowSandwich as s, k}<span role="img" aria-label={s == null ? `Row ${k + 1}: no clue` : `Row ${k + 1} sandwich sum ${s}`}>{s ?? ''}</span>{/each}</div>
+      <div class="cluecols">{#each puzzle.colSandwich as s, k}{#if s == null}<span></span>{:else}<ClueCalc sum={s} digits={digitsOf(puzzle)} label={`Column ${k + 1} sandwich sum ${s}`} />{/if}{/each}</div>
+      <div class="cluerows">{#each puzzle.rowSandwich as s, k}{#if s == null}<span></span>{:else}<ClueCalc sum={s} digits={digitsOf(puzzle)} label={`Row ${k + 1} sandwich sum ${s}`} />{/if}{/each}</div>
     {/if}
     <div class="gridbox">
       <div class="grid" role="group" aria-label="Sudoku board" bind:this={grid}>
@@ -342,6 +365,10 @@
           <text x={origin[0]-(b[0]-a[0])*.27} y={origin[1]-(b[1]-a[1])*.27+.1} class="little-sum" text-anchor="middle">{d.sum}</text>
         {/each}
       </svg>
+      {#each cages as c}
+        {@const at = c.cells[0]}
+        {@render cageCalc(c, at % width + .25, Math.floor(at / width) + .22)}
+      {/each}
       {#if puzzle.variant === 'jigsaw' || puzzle.variant === 'samurai'}
         <svg class="region-overlay" viewBox={`0 0 ${width} ${width}`} aria-hidden="true">
           {#each outlinedRegions as region}{#each cageEdges(region,0,width) as [x1,y1,x2,y2]}<line {x1} {y1} {x2} {y2} class="region-edge" />{/each}{/each}
@@ -376,12 +403,10 @@
     <span role="status" data-testid="hint">{hintText}</span>
   </div>
   <label class="auto-clear"><input type="checkbox" role="switch" checked={game.autoClear} onchange={toggleAutoClear} /> Auto-clear notes</label>
-  {#if !host.zen}
-    <details class="helper-controls enter" open={!!helperCage}>
+    <details class="helper-controls enter">
       <summary>Sudoku helper</summary>
       <Helper digits={digitsOf(puzzle)} cell={coord(puzzle, board.selected)} cage={helperCage} />
     </details>
-  {/if}
   <details class="enter">
     <summary>Enter a puzzle</summary>
     <p>Paste 81 characters, row by row: digits 1–9, and . or 0 for a blank. It must have exactly one solution.</p>
@@ -392,7 +417,7 @@
   {#if importer}
     <details class="enter">
       <summary>Import a SudokuPad puzzle</summary>
-      <p>Paste a SudokuPad puzzle source: what sudokupad.app/api/puzzle/&lt;id&gt; returns (it starts with scl, ctc, fpuz or {'{'}). It stays on this device, in the Library.</p>
+      <p>Paste a SudokuPad puzzle source: what sudokupad.app/api/puzzle/&lt;id&gt; returns (it starts with scl, ctc, fpuz or {'{'}). It stays on this device and appears in Puzzles.</p>
       <textarea rows="3" spellcheck="false" aria-label="SudokuPad source" placeholder="scl…" bind:value={padSource}></textarea>
       <div><button class="action" onclick={importPad} disabled={!padSource.trim()}>Import</button></div>
       {#if importError}<p class="bad" role="alert" data-testid="import-error">{importError}</p>{/if}
@@ -404,7 +429,7 @@
       {#each clues as group}<h2>{group.title}</h2><ul>{#each group.items as item}<li>{item}</li>{/each}</ul>{/each}
     </details>
   {/if}
-  <footer><span>{#if !host.phone}Arrows move · 1–9 place or note · Shift+1–9 corner note · v, c, m choose Value, Corner, Center · Delete erases · Ctrl+Z undoes{#if library && !host.zen} · l opens the Library{/if}<br />{/if}Progress is saved on this device, notes included. No account, no score, no rush.</span></footer>
+  <footer><span>{#if !host.phone}Arrows move · 1–9 place or note · Shift+1–9 corner note · v, c, m choose Value, Corner, Center · Delete erases · Ctrl+Z undoes{#if !host.zen} · l opens the puzzle picker{/if}<br />{/if}Progress is saved on this device, notes included. No account, no score, no rush.</span></footer>
   </div>
 </div>
 
@@ -418,7 +443,6 @@
   .wide .top { grid-area: top; } .wide .bottom { grid-area: bottom; } .wide .board-scroll { grid-area: board; }
   .top, .bottom { min-width: 0; }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .head-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
   .zen header { justify-content: flex-end; }
   h1 { font-family: var(--heading); font-size: 30px; font-weight: 550; margin: 4px 0; letter-spacing: -.04em; }
   .info strong { font-family: var(--heading); font-weight: 600; }
@@ -427,17 +451,12 @@
   button { cursor: pointer; touch-action: manipulation; }
   button:disabled { opacity: .4; cursor: default; }
   button:not(:disabled):hover { background: color-mix(in srgb, var(--accent) 12%, var(--soft)); }
-  button:focus-visible, select:focus-visible, summary:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
-  .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 8px; }
-  .filters label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--dim); min-width: 0; }
-  .filters .wide { grid-column: 1 / -1; }
-  select { font: inherit; font-size: 13px; color: var(--ink); background: var(--soft); border: 1px solid var(--faint); border-radius: var(--r-md); padding: 7px 8px; min-width: 0; min-height: 36px; }
-  .none { color: var(--warn); font-size: 12px; margin: 4px 0; }
+  button:focus-visible, summary:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
   .info { font-size: 13px; line-height: 1.5; margin: 8px 0; }
   .info .rating, .info .rule { color: var(--dim); font-size: 12px; }
   /* A SudokuPad puzzle: its own drawing under transparent cells placed on it (PadDrawing.svelte). */
   .grid.pad { display: block; position: relative; border: 0; border-radius: 0; box-shadow: none; overflow: visible; }
-  .grid.pad button { position: absolute; border: 0; background: transparent; z-index: 1; }
+  .grid.pad button[data-cell] { position: absolute; border: 0; background: transparent; z-index: 1; }
   .grid.pad .v { font-size: max(13px, calc(var(--cw) * .58cqw)); }
   .grid.pad .corner { font-size: max(7px, calc(var(--cw) * .25cqw)); }
   .grid.pad .center { font-size: max(8px, calc(var(--cw) * .28cqw)); }
@@ -453,7 +472,7 @@
   .cluecols, .cluerows { display: grid; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
   .cluecols { grid-column: 2; grid-row: 1; grid-template-columns: repeat(9, minmax(0, 1fr)); padding: 0 2px; }
   .cluerows { grid-column: 1; grid-row: 2; grid-template-rows: repeat(9, minmax(0, 1fr)); padding: 2px 0; }
-  .cluecols span, .cluerows span { display: flex; align-items: center; justify-content: center; color: var(--ink); }
+  .cluecols, .cluerows { color: var(--ink); }
   .gridbox { grid-column: 2; grid-row: 2; position: relative; }
   .grid { container-type: inline-size; display: grid; grid-template-columns: repeat(var(--side), minmax(0, 1fr)); grid-template-rows: repeat(var(--side), minmax(0, 1fr)); border: 2px solid var(--ink); border-radius: var(--r-sm); overflow: hidden; box-shadow: var(--shadow); }
   .grid { aspect-ratio: 1; position: relative; z-index: 1; }
@@ -524,6 +543,7 @@
   .hint { display: flex; align-items: center; gap: 10px; margin: 10px 0 0; font-size: 12px; line-height: 1.5; }
   .hint span { color: var(--dim); min-width: 0; }
   .enter { margin: 12px 0 0; font-size: 12px; }
+  .helper-controls { border: 1px solid var(--faint); border-radius: var(--r-md); padding: 4px 10px; background: var(--soft); }
   .enter summary { cursor: pointer; color: var(--dim); padding: 6px 0; }
   .enter p { color: var(--dim); margin: 4px 0 6px; }
   .enter textarea { width: 100%; box-sizing: border-box; font: 13px/1.4 var(--mono); color: var(--ink); background: var(--soft); border: 1px solid var(--faint); border-radius: var(--r-md); padding: 8px; margin-bottom: 6px; }
@@ -539,6 +559,5 @@
   .compact .modes, .compact .digits, .compact .colors, .compact .tools { gap: 3px; }
   .compact .digits button { font-size: 18px; }
   .compact .modes button, .compact .tools button, .compact .action { padding-inline: 6px; font-size: 12px; }
-  .compact .filters { grid-template-columns: minmax(0, 1fr); }
   @media (max-width: 420px) { .eyebrow { font-size: 10px; } }
 </style>

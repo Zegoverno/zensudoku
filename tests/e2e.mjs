@@ -23,6 +23,17 @@ const catalog = JSON.parse(readFileSync(path.join(root, 'core/catalog.json'), 'u
 // A 4×4 SudokuPad puzzle with 2×2 boxes, and the same with a drawn line (a variant: no hints).
 const BOXES4 = '[[[0,0],[0,1],[1,0],[1,1]],[[0,2],[0,3],[1,2],[1,3]],[[2,0],[2,1],[3,0],[3,1]],[[2,2],[2,3],[3,2],[3,3]]]';
 const TINY = `{ce:[[{v:1},{v:2},,],[,,,{v:2}],[{v:2},,{v:4},],[,,,{v:1}]],re:${BOXES4},ca:[{v:'title: Tiny'},{v:'author: A. Setter'},{v:'rules: Normal sudoku rules apply.'}],vd:[{id:'abcDEF12345',t:'Video'}]}`;
+const SANDWICH_SOURCE = JSON.stringify({
+  cells: Array.from({ length: 9 }, () => Array.from({ length: 9 }, () => ({}))),
+  regions: Array.from({ length: 9 }, (_, b) => Array.from({ length: 9 }, (_, i) =>
+    [Math.floor(b / 3) * 3 + Math.floor(i / 3), b % 3 * 3 + i % 3])),
+  overlays: [{ center: [-.5, .5], text: '5' }, { center: [.5, .5], text: '8' }],
+  metadata: { rules: 'Standard sudoku rules apply. Outside clue sums are not supplied here.' },
+});
+const SANDWICH_RULE_SOURCE = SANDWICH_SOURCE.replace(
+  'Outside clue sums are not supplied here.',
+  'The clues outside the grid give the sum of digits between 1 and 9 in the corresponding row or column.',
+);
 const TINY_SCL = 'scl' + LZ.compressToBase64(TINY);
 // The same 4×4 in a 6×6 array under two rows and beside two columns of clues (a clue, a long text, one outside region).
 const OUT_L = Array.from({ length: 36 }, (_, i) => [Math.floor(i / 6), i % 6]).filter(([r, c]) => r < 2 || c < 2).map(rc => `[${rc}]`);
@@ -37,6 +48,7 @@ const VARS = { '--color-background-primary': '#f4f1ea', '--color-background-seco
 const HOST = `<!doctype html><meta charset=utf-8><title>host</title><body style="margin:0"><iframe id=f sandbox="allow-scripts" style="width:560px;height:1100px;border:0"></iframe><script>
 const VARS = ${JSON.stringify(VARS)};
 let ctx = { theme: 'dark', displayMode: 'inline', styles: { variables: VARS }, containerDimensions: { width: 560, height: 1100 }, zen: { pane: 'board', phone: false, slot: 'game', headingFont: 'Georgia, serif' } };
+if (location.search === '?native-theme') ctx.styles = undefined;
 const helper = location.pathname === '/helper-host.html';
 if (helper) {
   frameSize();
@@ -188,7 +200,8 @@ try {
   assert.equal(await page.locator('.grid button.given').count(), givenCount);
   await shot(page, 'pwa-entered');
   // the example is still there, with its progress
-  await page.locator('.filters select').last().selectOption('example-classic');
+  await page.getByRole('button', { name: 'Puzzles' }).click();
+  await page.locator('[data-id="example-classic"]').click();
   assert.equal(await page.locator(`[data-cell="${cell}"]`).getAttribute('data-value'), sol);
 
   // Import a SudokuPad puzzle: refused with a reason, then drawn and played (digits 1–4 on a 4×4)
@@ -234,13 +247,43 @@ try {
   assert.equal(await page.locator('[data-cell="2"]').getAttribute('data-value'), '3');
   await page.locator('[data-cell="2"]').click();
   await page.keyboard.press('l');
-  await page.getByRole('dialog', { name: 'Library' }).waitFor();
-  assert.match(await page.getByRole('dialog', { name: 'Library' }).textContent(), /No local library here/);
-  assert.match(await page.getByTestId('library-item').first().textContent(), /•\s*Tiny/);
+  await page.getByRole('dialog', { name: 'Puzzle picker' }).waitFor();
+  assert.match(await page.getByTestId('library-item').filter({ hasText: 'Tiny' }).textContent(), /•\s*Tiny/);
   await page.keyboard.press('Escape');
-  assert.equal(await page.getByRole('dialog', { name: 'Library' }).count(), 0);
-  await page.locator('.filters select').last().selectOption('example-classic');
+  assert.equal(await page.getByRole('dialog', { name: 'Puzzle picker' }).count(), 0);
+  await page.getByRole('button', { name: 'Puzzles' }).click();
+  await page.locator('[data-id="example-classic"]').click();
   assert.equal(await page.locator(`[data-cell="${cell}"]`).getAttribute('data-value'), sol);
+
+  // Generic numeric artwork is inert; the same number is actionable with explicit sandwich rules.
+  await page.setViewportSize({ width: 1100, height: 850 });
+  for (const source of [SANDWICH_SOURCE, SANDWICH_RULE_SOURCE]) {
+    if (!await padBox.isVisible()) await page.getByText('Import a SudokuPad puzzle', { exact: true }).click();
+    await padBox.fill(source);
+    await page.getByRole('button', { name: 'Import' }).click();
+    await page.getByTestId('pad-drawing').waitFor();
+    assert.equal(await page.getByTestId('clue-calculator').count(), source === SANDWICH_RULE_SOURCE ? 1 : 0);
+  }
+  const sandwich = page.getByRole('button', { name: 'Sandwich sum 5' });
+  const sandwichResults = page.locator('[data-testid=clue-results]:popover-open');
+  await sandwich.hover();
+  await sandwichResults.waitFor();
+  assert.match(await sandwichResults.textContent(), /2 \+ 3/);
+  await page.mouse.move(1080, 820);
+  await sandwichResults.waitFor({ state: 'hidden' });
+  await page.keyboard.press('Tab');
+  await sandwich.focus();
+  await sandwichResults.waitFor();
+  await page.emulateMedia({ colorScheme: 'light' });
+  await shot(page, 'contextual-desktop-light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await shot(page, 'contextual-desktop-dark');
+  await page.keyboard.press('Escape');
+  await sandwichResults.waitFor({ state: 'hidden' });
+
+  await page.getByRole('button', { name: 'Puzzles' }).click();
+  await page.locator('[data-id="example-classic"]').click();
+  await page.setViewportSize({ width: 430, height: 1000 });
 
   // installable and offline: a manifest, and a service worker that serves the page without a network
   const manifest = await (await page.request.get(base + '/manifest.webmanifest')).json();
@@ -287,7 +330,7 @@ try {
   assert.equal(await ui.locator('html').getAttribute('data-zen'), '');
   assert.equal(await ui.locator('h1').count(), 0);
   assert.equal(await ui.locator('.eyebrow').count(), 0);
-  assert.ok(await ui.getByRole('button', { name: 'New puzzle' }).isVisible(), 'the game action stays');
+  assert.ok(await ui.getByRole('button', { name: 'Puzzles' }).isVisible(), 'the game action stays');
   // colours, radii and fonts come from the host's variables
   const style = sel => ui.locator(sel).first().evaluate(el => { const c = getComputedStyle(el); return { bg: c.backgroundColor, color: c.color, radius: c.borderTopLeftRadius, font: c.fontFamily }; });
   assert.equal((await style('body')).bg, 'rgb(244, 241, 234)');
@@ -424,20 +467,31 @@ try {
   await hostPage.evaluate(([tiny, line]) => {
     const info = { id: 'tiny-1', collection: 'Set', number: 'T1', title: 'Tiny', author: 'A. Setter', video: 'https://youtu.be/abcDEF12345' };
     window.toolReply = p => p.name === 'zensudoku_library'
-      ? { content: [{ type: 'text', text: '1 puzzle' }], structuredContent: { available: true, errors: 0, entries: [{ id: 'tiny-1', collection: 'Set', number: 'T1', title: 'Tiny', author: 'A. Setter' }] } }
+      ? { content: [{ type: 'text', text: '1 puzzle' }], structuredContent: { available: true, errors: 0, entries: [{ id: 'tiny-1', collection: 'Set', number: 'T1', title: 'Tiny', author: 'A. Setter', variants: ['classic'], difficulty: 'easy', tags: ['practice'] }] } }
       : p.name === 'zensudoku_puzzle' && p.arguments.puzzleId === 'lib-tiny-1' ? { content: [{ type: 'text', text: 'ok' }], structuredContent: { puzzleId: 'lib-tiny-1', source: tiny, library: info } }
       : p.name === 'zensudoku_puzzle' && p.arguments.puzzleId === 'lib-line' ? { content: [{ type: 'text', text: 'ok' }], structuredContent: { puzzleId: 'lib-line', source: line, library: { id: 'line' } } }
       : null;
   }, [TINY_SCL, LINE_SCL]);
   await hostPage.evaluate(() => window.zenSend('zen/command', { id: 'library' }));
-  await ui.getByRole('dialog', { name: 'Library' }).waitFor();
-  await ui.getByTestId('library-item').waitFor();
-  await ui.getByLabel('Search the library').fill('nothing like it');
+  await ui.getByRole('dialog', { name: 'Puzzle picker' }).waitFor();
+  await ui.locator('[data-id="tiny-1"]').waitFor();
+  await ui.getByLabel('Search puzzles').fill('nothing like it');
   assert.equal(await ui.getByTestId('library-item').count(), 0);
-  await ui.getByLabel('Search the library').fill('t1');
-  await ui.getByLabel('Search the library').press('Enter');
+  await ui.getByLabel('Search puzzles').fill('practice');
+  assert.equal(await ui.getByTestId('library-item').count(), 1, 'search finds explicit tags');
+  await ui.getByLabel('Difficulty').selectOption('unknown');
+  assert.equal(await ui.getByTestId('library-item').count(), 0);
+  await ui.getByLabel('Difficulty').selectOption('easy');
+  await ui.getByLabel('Variant').selectOption('killer');
+  assert.equal(await ui.getByTestId('library-item').count(), 0);
+  await ui.getByLabel('Variant').selectOption('classic');
+  assert.equal(await ui.getByTestId('library-item').count(), 1);
+  await ui.getByLabel('Search puzzles').fill('');
+  assert.match(await ui.getByRole('dialog', { name: 'Puzzle picker' }).textContent(), /Built-in.*Set/s);
+  await ui.getByLabel('Search puzzles').fill('t1');
+  await ui.getByLabel('Search puzzles').press('Enter');
   await ui.getByTestId('pad-drawing').waitFor();
-  assert.equal(await ui.getByRole('dialog', { name: 'Library' }).count(), 0);
+  assert.equal(await ui.getByRole('dialog', { name: 'Puzzle picker' }).count(), 0);
   assert.match(await ui.locator('.info strong').textContent(), /T1 · Tiny/);
   assert.equal(await ui.locator('.grid.pad [data-cell]').count(), 16);
   await ui.locator('[data-cell="2"]').click();
@@ -466,7 +520,7 @@ try {
   await live(boardPage);
   // Mount the board before enabling live calls so its initial example report cannot replace the fixture.
   await boardPage.addInitScript(() => { window.ignoreReports = true; });
-  await boardPage.goto(base + '/host.html');
+  await boardPage.goto(base + '/host.html?native-theme');
   await boardPage.waitForFunction(() => window.ready);
   await boardPage.evaluate(id => {
     window.resize(390, 840, { phone: true });
@@ -474,6 +528,31 @@ try {
   }, openedCage.structuredContent.puzzleId);
   const liveBoard = boardPage.frameLocator('#f');
   await liveBoard.locator('.grid.pad').waitFor();
+  await ui.getByText('Sudoku helper', { exact: true }).click();
+  await ui.getByLabel('Cage sum').waitFor();
+  await ui.getByText('Sudoku helper', { exact: true }).click();
+  assert.equal(await liveBoard.locator('body').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(27, 28, 25)');
+  const cageClue = liveBoard.getByRole('button', { name: 'Killer cage sum 5 in 2 cells' });
+  const cageResults = liveBoard.locator('[data-testid=clue-results]:popover-open');
+  await cageClue.tap();
+  await cageResults.waitFor();
+  assert.match(await cageResults.textContent(), /1 \+ 4.*2 \+ 3/s);
+  await shot(boardPage, 'contextual-phone-390-dark');
+  await boardPage.evaluate(() => window.setContext({ theme: 'light', styles: undefined }));
+  await liveBoard.locator('html[data-theme=light]').waitFor();
+  await shot(boardPage, 'contextual-phone-390-light');
+  await cageClue.tap();
+  assert.equal(await cageResults.count(), 0);
+  await cageClue.hover();
+  await cageResults.waitFor();
+  await boardPage.mouse.move(380, 25);
+  await cageResults.waitFor({ state: 'hidden' });
+  await boardPage.keyboard.press('Tab');
+  await liveBoard.locator('.grid [data-cell][tabindex="0"]').focus();
+  await cageClue.focus();
+  await cageResults.waitFor();
+  await boardPage.keyboard.press('Escape');
+  await cageResults.waitFor({ state: 'hidden' });
   const helperPage = await browser.newPage({ viewport: { width: 360, height: 850 } });
   watch(helperPage);
   await live(helperPage);

@@ -25,7 +25,7 @@ export function commandList(a: Avail): ZenCommand[] {
     [a.redo, { id: 'redo', title: 'Redo', key: 'Mod+Shift+z' }],
     [a.notes, { id: 'toggle-notes', title: 'Toggle notes' }],
     [true, { id: 'toggle-auto-clear', title: 'Toggle auto-clear notes' }],
-    [a.library, { id: 'library', title: 'Library', key: 'l' }],
+    [a.library, { id: 'library', title: 'Puzzles', key: 'l' }],
   ];
   return all.filter(([ok]) => ok).map(([, c]) => c);
 }

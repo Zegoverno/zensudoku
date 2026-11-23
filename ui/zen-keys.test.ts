@@ -13,7 +13,7 @@ describe('commandList', () => {
       { id: 'redo', title: 'Redo', key: 'Mod+Shift+z' },
       { id: 'toggle-notes', title: 'Toggle notes' },
       { id: 'toggle-auto-clear', title: 'Toggle auto-clear notes' },
-      { id: 'library', title: 'Library', key: 'l' },
+      { id: 'library', title: 'Puzzles', key: 'l' },
     ]);
   });
   it('leaves out what cannot run now, keeps restart', () => {

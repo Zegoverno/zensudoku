@@ -7,7 +7,8 @@
 import { lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { MAX_SOURCE, decodeSource } from '../core/sudokupad.ts';
-import type { LibraryInfo } from '../core/sudoku.ts';
+import { DIFFICULTIES, VARIANTS } from '../core/sudoku.ts';
+import type { Variant, LibraryInfo } from '../core/sudoku.ts';
 
 export interface LibraryEntry extends LibraryInfo { link?: string; source: string; file: string }
 export interface Library { available: boolean; root: string; entries: LibraryEntry[]; errors: string[] }
@@ -15,6 +16,11 @@ export interface Library { available: boolean; root: string; entries: LibraryEnt
 const MAX_FILES = 5000, MAX_DEPTH = 8, MAX_BYTES = 1_000_000;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const field = (v: unknown, max = 300) => typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : typeof v === 'number' ? String(v) : undefined;
+const strings = (v: unknown): string[] | undefined => {
+  if (!Array.isArray(v)) return undefined;
+  const values = [...new Set(v.filter((s): s is string => typeof s === 'string').map(s => s.trim().slice(0, 60)).filter(Boolean))].slice(0, 30);
+  return values.length ? values : undefined;
+};
 const natural = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
 
 /** The library folder, or '' when the host gives the plugin no data folder. */
@@ -72,6 +78,9 @@ export function readLibrary(root: string = libraryRoot()): Library {
         id: typeof x.id === 'string' ? x.id : '', source: typeof x.source === 'string' ? x.source.trim() : '', file: f.rel,
         collection: field(x.collection) ?? (folder || undefined), number: field(x.number, 40), title: field(x.title), author: field(x.author),
         video: field(x.video), link: field(x.link),
+        difficulty: DIFFICULTIES.find(d => d === field(x.difficulty)?.toLowerCase()),
+        variants: strings(x.variants ?? (typeof x.variant === 'string' ? [x.variant] : undefined))?.map(v => v.toLowerCase()).filter((v): v is Variant => VARIANTS.includes(v as Variant)),
+        tags: strings(x.tags),
       };
       if (entry.video && !/^https:\/\//.test(entry.video)) entry.video = undefined;
       if (entry.link && !/^https:\/\//.test(entry.link)) entry.link = undefined;
