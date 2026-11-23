@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import type { Store } from './state.svelte.ts';
   import type { Snapshot } from './adapters.ts';
-  import { CATALOG, CUSTOM_PREFIX, VARIANT_LABEL, VARIANT_RULE, clueList, complete, customPuzzle, filtered, findPuzzle, gridText, hintable, padPuzzle, related, verdict, violations } from '../core/sudoku.ts';
+  import { CATALOG, CUSTOM_PREFIX, VARIANT_LABEL, VARIANT_RULE, clueList, customPuzzle, filtered, findPuzzle, gridText, hintable, padPuzzle, related, playVerdict, violations } from '../core/sudoku.ts';
   import type { Puzzle } from '../core/sudoku.ts';
-  import { COLORS, MODES, bit, choose, enter, erase, isDone, next, notesOf, peekBoard, puzzleOf, redo, reset, select as selectCell, setAutoClear, setColor, toggleNote, undo } from '../core/sudoku-game.ts';
+  import { COLORS, MODES, bit, choose, enter, erase, isDone, next, notesOf, peekBoard, puzzleOf, redo, restart, select as selectCell, setAutoClear, setColor, toggleNote, undo } from '../core/sudoku-game.ts';
+  import { formatTime } from '../core/play-time.ts';
   import type { Mode } from '../core/sudoku-game.ts';
   import { hint as nextHint } from '../core/hint.ts';
   import { arrowPoints, cageEdges, centre, thermoPoints } from '../core/sudoku-draw.ts';
@@ -30,7 +31,7 @@
     library?: LibrarySource; onlink?: (url: string) => void; importer?: boolean;
   } = $props();
   const game = $derived(store.game);
-  const save = () => store.save();
+  const save = () => { store.save(); elapsed = store.elapsed(); };
 
   const puzzle = $derived(puzzleOf(game));
   const board = $derived(peekBoard(game));
@@ -41,10 +42,10 @@
   const bad = $derived(new Set(rules.flatMap(v => v.cells)));
   const done = $derived(isDone(game));
   const sp = $derived(puzzle.pad);
-  const standing = $derived(verdict(board.cells, puzzle));
+  const standing = $derived(playVerdict(board.cells, puzzle));
   const digitList = $derived(Array.from({ length: digitsOf(puzzle) }, (_, k) => k + 1));
   const aspect = $derived(sp ? sp.bounds.w / sp.bounds.h : 1);
-  const FULL = 'Board full, no repeats. The variant rules can\'t be checked here: compare with the solution video.';
+  const FULL = 'Board full. This app cannot verify all the puzzle rules.';
   const filled = $derived(board.cells.filter(Boolean).length);
   const width = $derived(widthOf(puzzle));
   const activeCellsList = $derived(activeCells(puzzle));
@@ -97,6 +98,48 @@
     return Math.max(120, h ? Math.min(room, 520, Math.max(220, h - 96) * aspect) : Math.min(room, 520));
   });
   let grid: HTMLDivElement | undefined = $state();
+  let surface: HTMLDivElement;
+  let elapsed = $state(0), confirming = $state(false);
+  let inView = true, pageActive = true;
+  function refreshVisibility() {
+    store.setPlaying(pageActive && inView && !picking && !document.hidden);
+    elapsed = store.elapsed();
+  }
+  $effect(() => { picking; refreshVisibilityUntracked(); });
+  // Only picker visibility is a reactive dependency; changing a cell or the clock
+  // should not recreate listeners, the interval or its running segment.
+  function refreshVisibilityUntracked() { untrack(refreshVisibility); }
+
+  export function stopTimer() {
+    pageActive = false;
+    refreshVisibility();
+  }
+  onMount(() => {
+    const show = () => { pageActive = true; refreshVisibility(); };
+    const observer = new IntersectionObserver(([entry]) => {
+      inView = entry.isIntersecting;
+      refreshVisibility();
+    });
+    observer.observe(surface);
+    refreshVisibility();
+    document.addEventListener('visibilitychange', refreshVisibility);
+    window.addEventListener('pagehide', stopTimer);
+    window.addEventListener('pageshow', show);
+    const display = setInterval(() => { elapsed = store.elapsed(); }, 200);
+    const checkpoint = setInterval(() => store.checkpoint(), 2000);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('visibilitychange', refreshVisibility);
+      window.removeEventListener('pagehide', stopTimer);
+      window.removeEventListener('pageshow', show);
+      clearInterval(display);
+      clearInterval(checkpoint);
+      stopTimer();
+    };
+  });
+  function restartPuzzle() { restart(game); save(); }
+  function confirmSolve() { store.save(true); elapsed = store.elapsed(); confirming = false; }
+
   const act = (changed: boolean) => { if (changed) save(); return changed; };
   function select(i: number, focus = false) {
     selectCell(game, i);
@@ -105,10 +148,11 @@
   }
   const setMode = (m: Mode) => { game.mode = m; save(); };
   function open(id: string) { choose(game, id); save(); }
+  $effect(() => { puzzle.id; standing; confirming = false; });
   /** Runs a command zenbot picked (or its key): the same actions as the buttons. */
   export function run(id: CommandId) {
     if (id === 'new-game') act(next(game));
-    else if (id === 'restart') act(reset(game));
+    else if (id === 'restart') restartPuzzle();
     else if (id === 'hint') { if (!done) askHint(); }
     else if (id === 'undo') act(undo(game));
     else if (id === 'redo') act(redo(game));
@@ -197,9 +241,10 @@
   }
   /** solved, started (a board with entries) or neither, from this device's saved progress. */
   function mark(item: LibraryItem): '' | 'solved' | 'started' {
-    const b = game.boards[item.puzzleId], p = b && findPuzzle(item.puzzleId);
+    const b = game.boards[item.puzzleId];
+    if (b?.play.solved) return 'solved';
+    const p = b && findPuzzle(item.puzzleId);
     if (!b || !p) return '';
-    if (complete(b.cells, p)) return 'solved';
     return b.cells.some((n, i) => n && !p.givens[i]) || b.corner.some(Boolean) || b.center.some(Boolean) || b.colors.some(Boolean) ? 'started' : '';
   }
   async function pick(item: LibraryItem) {
@@ -275,7 +320,7 @@
 {/snippet}
 
 <svelte:window onkeydown={key} bind:innerWidth={viewportWidth} bind:innerHeight={viewportHeight} />
-<div class="games" class:samurai={puzzle.variant === 'samurai'} class:wide class:compact class:phone={host.phone} class:zen={host.zen} style:--side={width} style:--pad={`${pad}px`} style:--board={boardPx ? `${boardPx}px` : null}>
+<div class="games" bind:this={surface} class:samurai={puzzle.variant === 'samurai'} class:wide class:compact class:phone={host.phone} class:zen={host.zen} style:--side={width} style:--pad={`${pad}px`} style:--board={boardPx ? `${boardPx}px` : null}>
   <div class="top">
   <header>
     {#if !host.zen}<div><div class="eyebrow">Games</div><h1>Sudoku</h1></div>{/if}
@@ -298,7 +343,23 @@
     <div class="rule">{VARIANT_RULE[puzzle.variant]}</div>
   </div>
   {/if}
-  <div class="progress"><span role="status" data-testid="status">{done ? 'Beautifully done. Puzzle complete!' : rules.length ? rules[0].message : standing === 'full' ? FULL : `${filled} of ${activeCellsList.length} filled`}</span><button class="reset" onclick={() => act(reset(game))}>Reset</button></div>
+  <div class="play-time">
+    <span>Time <span data-testid="elapsed">{board.play.finished && !board.play.timed ? '—' : formatTime(elapsed)}</span></span>
+    <span>Best <span data-testid="best">{board.play.bestMs === null ? '—' : formatTime(board.play.bestMs)}</span></span>
+    {#if !board.play.timed}<span class="timing-note">Earlier play wasn’t timed</span>{/if}
+  </div>
+  <div class="progress"><span role="status" data-testid="status">{done ? 'Beautifully done. Puzzle complete!' : rules.length ? rules[0].message : standing === 'full' ? FULL : `${filled} of ${activeCellsList.length} filled`}</span><button class="reset" title="Clear the board and timer; keep your best time" onclick={restartPuzzle}>Restart</button></div>
+  {#if !done && standing === 'full'}
+    {#if confirming}
+      <div class="solve-confirm" role="group" aria-label="Confirm solution">
+        <span>Only confirm if you’ve checked the puzzle’s rules or solution yourself.</span>
+        <button class="action" onclick={confirmSolve}>Confirm solved</button>
+        <button class="action" onclick={() => confirming = false}>Cancel</button>
+      </div>
+    {:else}
+      <button class="action" onclick={() => confirming = true}>Mark solved</button>
+    {/if}
+  {/if}
   </div>
   <div class="board-scroll" role="region" aria-label="Board viewport">
   {#if sp}
@@ -429,7 +490,7 @@
       {#each clues as group}<h2>{group.title}</h2><ul>{#each group.items as item}<li>{item}</li>{/each}</ul>{/each}
     </details>
   {/if}
-  <footer><span>{#if !host.phone}Arrows move · 1–9 place or note · Shift+1–9 corner note · v, c, m choose Value, Corner, Center · Delete erases · Ctrl+Z undoes{#if !host.zen} · l opens the puzzle picker{/if}<br />{/if}Progress is saved on this device, notes included. No account, no score, no rush.</span></footer>
+  <footer><span>{#if !host.phone}Arrows move · 1–9 place or note · Shift+1–9 corner note · v, c, m choose Value, Corner, Center · Delete erases · Ctrl+Z undoes{#if !host.zen} · l opens the puzzle picker{/if}<br />{/if}Restart clears the board and timer, but keeps your best time and solved status.</span></footer>
   </div>
 </div>
 
@@ -466,6 +527,10 @@
   .info .rules p { margin: 0 0 6px; }
   .info .video { display: inline-block; margin-top: 4px; color: var(--accent); font-size: 12.5px; }
   .progress { display: flex; align-items: center; justify-content: space-between; min-height: 32px; font-size: 12px; gap: 8px; }
+  .play-time { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; margin-top: 6px; }
+  .play-time [data-testid] { color: var(--ink); font-weight: 600; }
+  .timing-note { font-size: 12px; }
+  .solve-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
   .reset { color: var(--dim); text-decoration: underline; padding: 6px; border-radius: var(--r-md); }
   .frame { display: grid; grid-template-columns: 0 minmax(0, 1fr); grid-template-rows: 0 auto; }
   .frame.sandwich { grid-template-columns: 1.7em minmax(0, 1fr); grid-template-rows: 1.7em auto; }

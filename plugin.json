@@ -1,6 +1,6 @@
 {
   "name": "zensudoku",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "title": "zensudoku",
   "description": "Sudoku with value, corner and center notes (cleared as you place digits), colors, undo and redo, hints, and a killer cage and sandwich calculator; plays SudokuPad puzzles from a source or a local library. A standalone PWA, a zenbot plugin with an inline Sudoku helper, and an MCP App.",
   "author": "Zegoverno",

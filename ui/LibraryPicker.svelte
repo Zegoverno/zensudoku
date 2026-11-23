@@ -4,6 +4,8 @@
   // says whether that puzzle is solved (✓) or started (•) on this device.
   import { onMount, tick } from 'svelte';
   import { DIFFICULTIES, VARIANTS, VARIANT_LABEL } from '../core/sudoku.ts';
+  import { matchesSolveFilter } from '../core/play-time.ts';
+  import type { SolveFilter } from '../core/play-time.ts';
   import type { LibraryItem, LibraryList } from './adapters.ts';
   let { list, error = '', loading = false, mark, onpick, onclose }: {
     list: LibraryList; error?: string; loading?: boolean;
@@ -13,9 +15,11 @@
 
   let query = $state(''), active = $state(0), input: HTMLInputElement | undefined = $state(), box: HTMLDivElement | undefined = $state();
   let variant = $state('all'), difficulty = $state('all');
+  let solved = $state<SolveFilter>('all');
   const shown = $derived.by(() => {
     const q = query.trim().toLowerCase();
     return list.entries.filter(e =>
+      matchesSolveFilter(solved, solved !== 'all' && mark(e) === 'solved') &&
       (variant === 'all' || (variant === 'unknown' ? !e.variants?.length : e.variants?.some(v => v === variant))) &&
       (difficulty === 'all' || (difficulty === 'unknown' ? !e.difficulty : e.difficulty === difficulty)) &&
       (!q || [e.number, e.title, e.author, e.id, e.collection, ...(e.tags ?? [])].some(s => s?.toLowerCase().includes(q))));
@@ -62,12 +66,14 @@
     <button class="close" aria-label="Close puzzle picker" onclick={onclose}>×</button>
   </div>
   <div class="filters">
-    <label>Variant<select bind:value={variant}><option value="all">All variants</option>
+    <label>Variant<select aria-label="Variant" bind:value={variant}><option value="all">All variants</option>
       {#each VARIANTS as v}<option value={v}>{VARIANT_LABEL[v]}</option>{/each}
       <option value="unknown">Unclassified</option></select></label>
-    <label>Difficulty<select bind:value={difficulty}><option value="all">Any difficulty</option>
+    <label>Difficulty<select aria-label="Difficulty" bind:value={difficulty}><option value="all">Any difficulty</option>
       {#each DIFFICULTIES as d}<option value={d}>{d}</option>{/each}
       <option value="unknown">Unclassified</option></select></label>
+    <label>Status<select aria-label="Status" bind:value={solved}><option value="all">All</option>
+      <option value="solved">Solved</option><option value="unsolved">Unsolved</option></select></label>
   </div>
   {#if error}<p class="note bad" role="alert">{error}</p>{/if}
   {#if loading}<p class="note" role="status">Loading local puzzles…</p>{/if}
@@ -79,8 +85,9 @@
         {#each g.items as { item, k } (item.puzzleId)}
           {@const m = mark(item)}
           <div id={`lib-${k}`} data-k={k} role="option" tabindex="-1" aria-selected={k === active} class:on={k === active}
+            aria-label={[label(item), item.author, m === 'solved' ? 'Solved' : m === 'started' ? 'In progress' : 'Unsolved'].filter(Boolean).join(', ')}
             data-testid="library-item" data-id={item.id} onclick={() => onpick(item)} onkeydown={key} onmousemove={() => (active = k)}>
-            <span class="mark" class:solved={m === 'solved'} aria-label={m ? (m === 'solved' ? 'solved' : 'in progress') : undefined}>{m === 'solved' ? '✓' : m === 'started' ? '•' : ''}</span>
+            <span class="mark" class:solved={m === 'solved'} aria-hidden="true">{m === 'solved' ? '✓' : m === 'started' ? '•' : ''}</span>
             <span class="name">{label(item)}</span>
             {#if item.author}<span class="by">{item.author}</span>{/if}
           </div>
@@ -91,7 +98,7 @@
 
 <style>
   .picker { margin: 10px 0; border: 1px solid var(--faint); border-radius: var(--r-md); background: var(--soft); padding: 8px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-  .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   label { font-size: 12px; color: var(--dim); display: grid; gap: 3px; min-width: 0; }
   select { min-width: 0; min-height: 34px; color: var(--ink); background: var(--paper); font: inherit; border: 1px solid var(--faint); border-radius: var(--r-sm); }
   .head { display: flex; gap: 6px; }

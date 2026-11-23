@@ -78,7 +78,7 @@ async function mountBoard() {
     }
   }
   const writer = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
-  let revision = 0;
+  let revision = 0, pendingSave: ReturnType<typeof resume> | undefined;
   const store = createStore({
     read: () => storedGame ?? storage.read(),
     write(game) {
@@ -89,7 +89,7 @@ async function mountBoard() {
       const entries = [...new Set([puzzleId, ...Object.keys(boards)])].filter(id => id.startsWith(PAD_PREFIX))
         .map(id => store.sources.get(id)).filter((e): e is SourceEntry => !!e).slice(0, 200)
         .map(({ id, source }) => ({ id, source }));
-      void resume({ save: { game, sources: entries, writer, revision: ++revision } });
+      pendingSave = resume({ save: { game, sources: entries, writer, revision: ++revision } });
     },
   }, {
     get: id => hydrated.get(id) ?? (storedGame && id.startsWith(LIBRARY_PREFIX) ? undefined : sources.get(id)),
@@ -170,6 +170,12 @@ async function mountBoard() {
       onkey: (e: KeyboardEvent, typing: boolean) => { void zen('zen/key', keyPayload(e, typing)); },
     },
   });
+  app.onteardown = async () => {
+    view.stopTimer();
+    clearTimeout(timer);
+    await pendingSave;
+    return {};
+  };
   connected = true;
   sendCommands();
 }
