@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { commandId, commandList, focused, keyPayload, shouldForward } from './zen-keys.ts';
 
-const all = { next: true, hint: true, notes: true, undo: true, redo: true };
+const all = { next: true, hint: true, notes: true, undo: true, redo: true, library: true };
 
 describe('commandList', () => {
   it('declares the game commands in ring order with zenbot key forms', () => {
@@ -12,10 +12,11 @@ describe('commandList', () => {
       { id: 'undo', title: 'Undo', key: 'Mod+z', ring: true },
       { id: 'redo', title: 'Redo', key: 'Mod+Shift+z' },
       { id: 'toggle-notes', title: 'Toggle notes' },
+      { id: 'library', title: 'Library', key: 'l' },
     ]);
   });
   it('leaves out what cannot run now, keeps restart', () => {
-    const ids = commandList({ next: false, hint: false, notes: false, undo: false, redo: true }).map(c => c.id);
+    const ids = commandList({ next: false, hint: false, notes: false, undo: false, redo: true, library: false }).map(c => c.id);
     expect(ids).toEqual(['restart', 'redo']);
   });
   it('respects the contract: id, title, key shapes, at most four ring commands', () => {
@@ -47,6 +48,7 @@ describe('keys', () => {
   });
   it('reads notification params defensively', () => {
     expect(commandId({ id: 'undo' })).toBe('undo');
+    expect(commandId({ id: 'library' })).toBe('library');
     expect(commandId({ id: 'rm-rf' })).toBeNull();
     expect(commandId(undefined)).toBeNull();
     expect(focused({ focused: true })).toBe(true);

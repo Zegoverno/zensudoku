@@ -5,9 +5,9 @@
 // Pure functions, so they are unit tested without a browser.
 
 /** What the board can do right now; a command that cannot run is not declared. */
-export interface Avail { next: boolean; hint: boolean; notes: boolean; undo: boolean; redo: boolean }
+export interface Avail { next: boolean; hint: boolean; notes: boolean; undo: boolean; redo: boolean; library: boolean }
 
-export type CommandId = 'new-game' | 'restart' | 'hint' | 'undo' | 'redo' | 'toggle-notes';
+export type CommandId = 'new-game' | 'restart' | 'hint' | 'undo' | 'redo' | 'toggle-notes' | 'library';
 
 export interface ZenCommand { id: CommandId; title: string; key?: string; ring?: true }
 
@@ -24,6 +24,7 @@ export function commandList(a: Avail): ZenCommand[] {
     [a.undo, { id: 'undo', title: 'Undo', key: 'Mod+z', ring: true }],
     [a.redo, { id: 'redo', title: 'Redo', key: 'Mod+Shift+z' }],
     [a.notes, { id: 'toggle-notes', title: 'Toggle notes' }],
+    [a.library, { id: 'library', title: 'Library', key: 'l' }],
   ];
   return all.filter(([ok]) => ok).map(([, c]) => c);
 }
@@ -39,6 +40,6 @@ export const shouldForward = (e: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey'>, typ
 /** Reads a `zen/command` or `zen/focus` notification's params defensively. */
 export function commandId(params: unknown): CommandId | null {
   const id = (params as { id?: unknown } | null)?.id;
-  return typeof id === 'string' && ['new-game', 'restart', 'hint', 'undo', 'redo', 'toggle-notes'].includes(id) ? (id as CommandId) : null;
+  return typeof id === 'string' && ['new-game', 'restart', 'hint', 'undo', 'redo', 'toggle-notes', 'library'].includes(id) ? (id as CommandId) : null;
 }
 export const focused = (params: unknown): boolean => (params as { focused?: unknown } | null)?.focused === true;

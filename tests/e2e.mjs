@@ -4,18 +4,25 @@
 //   2. the MCP App (ui/dist/index.html) in a sandboxed iframe under a minimal test host: handshake,
 //      a tool result opens a puzzle, and each change is reported to the server and the model context;
 //      zenbot's host context (theme, --color-* variables, containerDimensions, zen) is followed live:
-//      its title and close are the host's, and the board fits 1100, 390 and 280 px containers.
+//      its title and close are the host's, and the board fits 1100, 390 and 280 px containers;
+//   3. SudokuPad puzzles (hand-made here): imported in the PWA, and opened from the library in the MCP App.
 // `node tests/e2e.mjs`   (`SHOTS=/some/dir node tests/e2e.mjs` also writes screenshots there)
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import LZ from 'lz-string';
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const dist = path.join(root, 'shells/web/dist');
 for (const f of [path.join(dist, 'index.html'), path.join(root, 'ui/dist/index.html')]) assert.ok(existsSync(f), `${f} is missing: run npm run build`);
 const catalog = JSON.parse(readFileSync(path.join(root, 'core/catalog.json'), 'utf8')).puzzles[0];
+// A 4×4 SudokuPad puzzle with 2×2 boxes, and the same with a drawn line (a variant: no hints).
+const BOXES4 = '[[[0,0],[0,1],[1,0],[1,1]],[[0,2],[0,3],[1,2],[1,3]],[[2,0],[2,1],[3,0],[3,1]],[[2,2],[2,3],[3,2],[3,3]]]';
+const TINY = `{ce:[[{v:1},{v:2},,],[,,,{v:2}],[{v:2},,{v:4},],[,,,{v:1}]],re:${BOXES4},ca:[{v:'title: Tiny'},{v:'author: A. Setter'},{v:'rules: Normal sudoku rules apply.'}],vd:[{id:'abcDEF12345',t:'Video'}]}`;
+const TINY_SCL = 'scl' + LZ.compressToBase64(TINY);
+const LINE_SCL = 'scl' + LZ.compressToBase64(TINY.replace('re:', 'l:[{wp:[[0.5,0.5],[1.5,1.5]],c:CFCFCF,th:10}],re:'));
 const shots = process.env.SHOTS;
 if (shots) mkdirSync(shots, { recursive: true });
 
@@ -24,7 +31,7 @@ const VARS = { '--color-background-primary': '#f4f1ea', '--color-background-seco
 const HOST = `<!doctype html><meta charset=utf-8><title>host</title><body style="margin:0"><iframe id=f sandbox="allow-scripts" style="width:560px;height:1100px;border:0"></iframe><script>
 const VARS = ${JSON.stringify(VARS)};
 let ctx = { theme: 'dark', displayMode: 'inline', styles: { variables: VARS }, containerDimensions: { width: 560, height: 1100 }, zen: { pane: 'board', phone: false, slot: 'game', headingFont: 'Georgia, serif' } };
-window.calls = []; window.contexts = []; window.zenmsgs = []; window.ready = false;
+window.calls = []; window.contexts = []; window.zenmsgs = []; window.links = []; window.ready = false; window.toolReply = null;
 const frame = document.getElementById('f');
 const reply = (id, result) => frame.contentWindow.postMessage({ jsonrpc: '2.0', id, result }, '*');
 addEventListener('message', e => {
@@ -33,7 +40,8 @@ addEventListener('message', e => {
   if (m.method === 'ui/initialize') reply(m.id, { protocolVersion: '2026-01-26', hostInfo: { name: 'test-host', version: '0' }, hostCapabilities: {}, hostContext: ctx });
   else if (m.method === 'ui/notifications/initialized') window.ready = true;
   else if (m.method && m.method.startsWith('zen/')) window.zenmsgs.push(m);
-  else if (m.method === 'tools/call') { window.calls.push(m.params); reply(m.id, { content: [{ type: 'text', text: 'ok' }] }); }
+  else if (m.method === 'tools/call') { window.calls.push(m.params); reply(m.id, (window.toolReply && window.toolReply(m.params)) || { content: [{ type: 'text', text: 'ok' }] }); }
+  else if (m.method === 'ui/open-link') { window.links.push(m.params.url); reply(m.id, {}); }
   else if (m.method === 'ui/update-model-context') { window.contexts.push(m.params); reply(m.id, {}); }
   else if (m.id !== undefined) reply(m.id, {});
 });
@@ -146,6 +154,45 @@ try {
   assert.equal(await page.locator('.grid button.given').count(), givenCount);
   await shot(page, 'pwa-entered');
   // the example is still there, with its progress
+  await page.locator('.filters select').last().selectOption('example-classic');
+  assert.equal(await page.locator(`[data-cell="${cell}"]`).getAttribute('data-value'), sol);
+
+  // Import a SudokuPad puzzle: refused with a reason, then drawn and played (digits 1–4 on a 4×4)
+  await page.getByText('Import a SudokuPad puzzle', { exact: true }).click();
+  const padBox = page.getByLabel('SudokuPad source');
+  await padBox.fill('Xy7Kq2Lm9P');
+  await page.getByRole('button', { name: 'Import' }).click();
+  assert.match(await page.getByTestId('import-error').textContent(), /short id/);
+  await padBox.fill(TINY_SCL);
+  await page.getByRole('button', { name: 'Import' }).click();
+  await page.getByTestId('pad-drawing').waitFor();
+  assert.equal(await page.locator('.grid.pad [data-cell]').count(), 16);
+  assert.equal(await page.locator('.grid.pad .given').count(), 6);
+  assert.match(await page.getByTestId('author').textContent(), /A\. Setter/);
+  assert.match(await page.getByTestId('rules').textContent(), /Normal sudoku rules apply/);
+  assert.equal(await page.getByTestId('video').getAttribute('href'), 'https://youtu.be/abcDEF12345');
+  assert.equal(await page.locator('.digits button').count(), 4);
+  await page.locator('[data-cell="2"]').click();
+  await page.keyboard.press('5');
+  assert.equal(await page.locator('[data-cell="2"]').getAttribute('data-value'), '', 'no 5 on a 4×4');
+  await page.keyboard.press('3');
+  assert.equal(await page.locator('[data-cell="2"]').getAttribute('data-value'), '3');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('3');
+  assert.match(await page.getByTestId('status').textContent(), /3 repeats in row 1/);
+  await page.keyboard.press('Delete');
+  await shot(page, 'pwa-sudokupad');
+  // it survives a reload, and the Library (l) lists it as imported
+  await page.reload();
+  await page.getByTestId('pad-drawing').waitFor();
+  assert.equal(await page.locator('[data-cell="2"]').getAttribute('data-value'), '3');
+  await page.locator('[data-cell="2"]').click();
+  await page.keyboard.press('l');
+  await page.getByRole('dialog', { name: 'Library' }).waitFor();
+  assert.match(await page.getByRole('dialog', { name: 'Library' }).textContent(), /No local library here/);
+  assert.match(await page.getByTestId('library-item').first().textContent(), /•\s*Tiny/);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.getByRole('dialog', { name: 'Library' }).count(), 0);
   await page.locator('.filters select').last().selectOption('example-classic');
   assert.equal(await page.locator(`[data-cell="${cell}"]`).getAttribute('data-value'), sol);
 
@@ -266,8 +313,8 @@ try {
   const first = await hostPage.evaluate(() => window.zenmsgs.find(m => m.method === 'zen/commands').params.commands);
   // one bundled puzzle: nothing to start, so "New game" is not declared; the rest is, with zenbot's key forms
   assert.deepEqual(first.filter(c => c.ring).map(c => c.id), ['restart', 'hint']);
-  assert.deepEqual(first.map(c => [c.id, c.key]).filter(([, k]) => k), [['hint', 'h']]);
-  assert.deepEqual(first.map(c => c.id), ['restart', 'hint', 'toggle-notes']);
+  assert.deepEqual(first.map(c => [c.id, c.key]).filter(([, k]) => k), [['hint', 'h'], ['library', 'l']]);
+  assert.deepEqual(first.map(c => c.id), ['restart', 'hint', 'toggle-notes', 'library']);
   // the entered puzzle makes another one available: New game (n) joins, first in the ring
   const latest = await hostPage.evaluate(() => window.zenmsgs.filter(m => m.method === 'zen/commands').at(-1).params.commands);
   assert.deepEqual(latest.slice(0, 2).map(c => [c.id, c.key, c.ring]), [['new-game', 'n', true], ['restart', undefined, true]]);
@@ -323,8 +370,44 @@ try {
   await hostPage.evaluate(() => window.zenSend('zen/focus', { focused: true }));
   await ui.locator('[data-cell]:focus').waitFor();
 
+  // ---- the library: the picker lists the server's puzzles; one opens, drawn, with its rules and video ----
+  await hostPage.evaluate(([tiny, line]) => {
+    const info = { id: 'tiny-1', collection: 'Set', number: 'T1', title: 'Tiny', author: 'A. Setter', video: 'https://youtu.be/abcDEF12345' };
+    window.toolReply = p => p.name === 'zensudoku_library'
+      ? { content: [{ type: 'text', text: '1 puzzle' }], structuredContent: { available: true, errors: 0, entries: [{ id: 'tiny-1', collection: 'Set', number: 'T1', title: 'Tiny', author: 'A. Setter' }] } }
+      : p.name === 'zensudoku_puzzle' && p.arguments.puzzleId === 'lib-tiny-1' ? { content: [{ type: 'text', text: 'ok' }], structuredContent: { puzzleId: 'lib-tiny-1', source: tiny, library: info } }
+      : p.name === 'zensudoku_puzzle' && p.arguments.puzzleId === 'lib-line' ? { content: [{ type: 'text', text: 'ok' }], structuredContent: { puzzleId: 'lib-line', source: line, library: { id: 'line' } } }
+      : null;
+  }, [TINY_SCL, LINE_SCL]);
+  await hostPage.evaluate(() => window.zenSend('zen/command', { id: 'library' }));
+  await ui.getByRole('dialog', { name: 'Library' }).waitFor();
+  await ui.getByTestId('library-item').waitFor();
+  await ui.getByLabel('Search the library').fill('nothing like it');
+  assert.equal(await ui.getByTestId('library-item').count(), 0);
+  await ui.getByLabel('Search the library').fill('t1');
+  await ui.getByLabel('Search the library').press('Enter');
+  await ui.getByTestId('pad-drawing').waitFor();
+  assert.equal(await ui.getByRole('dialog', { name: 'Library' }).count(), 0);
+  assert.match(await ui.locator('.info strong').textContent(), /T1 · Tiny/);
+  assert.equal(await ui.locator('.grid.pad [data-cell]').count(), 16);
+  await ui.locator('[data-cell="2"]').click();
+  await ui.locator('[data-cell="2"]').press('3');
+  await hostPage.waitForFunction(() => window.calls.some(c => c.name === 'zensudoku_report' && c.arguments.puzzleId === 'lib-tiny-1' && c.arguments.cells === '123....2' + '2.4....1'));
+  await ui.getByTestId('video').click();
+  await hostPage.waitForFunction(() => window.links.includes('https://youtu.be/abcDEF12345'));
+  // a phone: one column, no sideways scroll
+  await hostPage.evaluate(() => window.resize(390, 1000, { phone: true }));
+  await ui.locator('.games.phone').waitFor();
+  assert.ok(await ui.locator('html').evaluate(el => el.scrollWidth <= el.clientWidth + 1), 'no sideways scroll at 390 px');
+  await shot(hostPage, 'host-sudokupad-phone');
+  // a tool result for a puzzle the board has not seen fetches it first; a variant offers no hint
+  await hostPage.evaluate(() => window.sendResult({ puzzleId: 'lib-line' }));
+  await ui.locator('.grid.pad polyline').first().waitFor();
+  await ui.getByRole('button', { name: 'Hint' }).click();
+  assert.match(await ui.getByTestId('hint').textContent(), /aren't available for this variant/);
+
   assert.deepEqual(errors.filter(e => !/localStorage|Failed to read the 'localStorage'|SecurityError|sandbox/i.test(e)), [], 'no page errors');
-  console.log('e2e ok: PWA (play, undo, notes, reload, hint, enter, offline, solve) and MCP App (handshake, result, report, zen keys and commands)');
+  console.log('e2e ok: PWA (play, undo, notes, reload, hint, enter, SudokuPad import, offline, solve) and MCP App (handshake, result, report, zen keys and commands, library)');
 } finally {
   await browser.close();
   http.close();

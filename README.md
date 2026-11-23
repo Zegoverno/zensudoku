@@ -1,7 +1,8 @@
 # zensudoku
 
 Sudoku with value, corner and center notes, six cell colors, undo and redo, hints and conflict
-marking. One code base, three ways to run it:
+marking. It also plays [SudokuPad](https://sudokupad.app) puzzles, drawn the way SudokuPad draws
+them, from a source you import or from a local library of your own. One code base, three ways to run it:
 
 - a **PWA**: static files, installable on desktop and Android, works offline;
 - a **[zenbot](https://github.com/Zegoverno/zenbot) plugin**: an entry in the Games tab, a `/sudoku` command, and a coaching skill;
@@ -9,7 +10,8 @@ marking. One code base, three ways to run it:
   [MCP Apps](https://modelcontextprotocol.io) (Claude, ChatGPT and others), with tools the agent can call.
 
 MIT licensed. No account, no score, no network, no telemetry: progress stays on your device.
-The plugin asks zenbot for no permissions (`kernel: []`): it reads and writes no files.
+The plugin asks zenbot for no permissions (`kernel: []`): it reads only its own data folder (the local
+library, below) and writes no files.
 
 ## Play
 
@@ -24,6 +26,7 @@ Click or tap a cell, then the pad, or use the keyboard:
 | v, c, m | Value, Corner, Center mode |
 | Delete, Backspace, 0 | erase: the value, then the notes, then the color |
 | Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y | undo, redo |
+| l | the Library (standalone; inside zenbot it is the Library command) |
 
 Placing a digit clears that cell's notes. Givens are protected. A repeated digit, or a broken
 variant rule, marks the cells and says why. A finished board is locked. **Hint** points at one
@@ -36,6 +39,43 @@ The rules engine knows thirteen variants (classic, diagonal, killer, sandwich, t
 consecutive, non-consecutive, arrow, renban, Kropki, Little Killer, jigsaw, Samurai); `core/catalog.json`
 holds the puzzles and takes more entries (see `parseCatalog` in `core/sudoku.ts`). v0 ships the
 one classic example and no puzzle collection.
+
+## SudokuPad puzzles
+
+A SudokuPad source is what `https://sudokupad.app/api/puzzle/<id>` returns: `scl` (or `ctc`) and the
+lz-string (base64) of SudokuPad's compact puzzle text, `fpuz` and the lz-string of an f-puzzles JSON, or the
+compact text itself, starting with `{`. zensudoku reads it offline (`core/sudokupad.ts`) and draws it in
+SudokuPad's layer order: shading and other underlays, lines and arrows, killer cages, grid lines and region
+borders, overlays (dots, circles, clue text), with SudokuPad's sizes and colours. Clues outside the grid (sandwich,
+skyscraper, Little Killer) are drawn around it; only the cells inside the regions are played. Black and white
+follow the theme, as in SudokuPad's dark mode. From an f-puzzles source it draws what SudokuPad draws.
+
+The board is any size up to 30 × 30, with digits 1 to N (N is the regions' size, at most 9). Notes, colors,
+undo and redo and saved progress work as for any puzzle. The side panel shows the title, the author, the rules
+and **Watch the solution** when the puzzle names a video. What zensudoku checks:
+
+- repeats in rows, columns and regions, always;
+- with a solution in the puzzle, the board against it;
+- with no drawing beyond regions and shading, and the classic rules leaving only a few solutions (a "pick your
+  difficulty" cell, say), any full board without repeats is solved, and **Hint** works as on a classic puzzle;
+- otherwise a full board without repeats says *Board full, no repeats. The variant rules can't be checked here:
+  compare with the solution video.* zensudoku does not read rules text, so it has no hints for these.
+
+In the PWA, **Import a SudokuPad puzzle** takes a source, keeps it on this device and lists it in the Library.
+
+## The local library
+
+In zenbot, the **Library** button (or `l`) lists the puzzles in the plugin's data folder, `$ZEN_PLUGIN_DATA/library/`
+(for zenbot, `~/.zenbot/plugin-data/zensudoku/library/`), grouped by collection, searchable by number, title or
+author, with ✓ for solved and • for started on this device. Put each puzzle in any subfolder as
+
+- `<name>.json`: `{"id": "…", "source": "…", "collection": "…", "number": "…", "title": "…", "author": "…", "video": "https://…", "link": "https://…"}`;
+  only `id` (letters, digits, `.`, `_`, `-`) and `source` are required; or
+- `<name>.txt`: just a source; its id is the file name.
+
+The list is sorted by collection, then number (or title), in natural order. Dot files are skipped; a file that
+cannot be read, is not valid, repeats an id or is a link out of the library is listed as an error and left out.
+The server only reads this folder. Hosts that give no data folder (Claude Desktop, the PWA) have no library.
 
 ## Play it standalone (PWA)
 
@@ -71,7 +111,7 @@ The board follows zenbot's host (MCP Apps host context), live:
   beside its controls; a phone (390 px) or a narrow side panel gets one column with the board as wide as
   the container allows, and never a sideways scroll.
 - **Keyboard**: the board takes part in zenbot's keyboard model (zenbot's `PLUGINS.md`, "Keys and commands"). It declares
-  New game (`n`), Restart, Hint (`h`), Undo (`Mod+z`), Redo (`Mod+Shift+z`) and Toggle notes, which show in zenbot's
+  New game (`n`), Restart, Hint (`h`), Undo (`Mod+z`), Redo (`Mod+Shift+z`), Toggle notes and Library (`l`), which show in zenbot's
   ring and command list (a command that cannot run now is left out). Inside zenbot those keys are forwarded and zenbot
   sends the command back, so the owner can rebind them; the board keeps arrows, digits, `v`/`c`/`m`, Delete and Ctrl+Y.
   Every other keydown goes to zenbot (only Ctrl/Meta ones from the puzzle text box), and the board takes the focus when its panel does.
@@ -91,11 +131,14 @@ The tools:
 
 | Tool | Does |
 |---|---|
-| `zensudoku_new` | opens the example, or `puzzle` (81 characters) after checking it has one solution; shows the board |
+| `zensudoku_new` | opens the example, `puzzle` (81 characters) after checking it has one solution, or a SudokuPad source; shows the board |
+| `zensudoku_library` | the local library: id, collection, number, title and author (`query` filters), and how many files could not be read |
+| `zensudoku_open` | opens a library puzzle by id, with its rules; shows the board |
 | `zensudoku_state` | the board as a text grid with conflicts |
-| `zensudoku_check` | conflicts, solved or not, and how many entries are wrong (a count only) |
+| `zensudoku_check` | conflicts, solved or not (or full but not checkable), and how many entries are wrong (a count only) |
 | `zensudoku_hint` | one next logical step with its reason; never the solution |
 | `zensudoku_report` | app only: the board tells the server what it shows |
+| `zensudoku_puzzle` | app only: the source of a SudokuPad puzzle the server opened, so the board can draw it |
 
 The board reports each change to the server and to the chat (`updateModelContext`), so the agent
 sees what you see. The view is `ui://zensudoku/app`. Hosts that only speak remote (HTTP) MCP need a
@@ -104,9 +147,9 @@ bridge: this server speaks stdio only.
 ## Layout
 
 ```
-core/        rules, game model, solver, hints: pure TypeScript, tested with vitest
+core/        rules, game model, solver, hints, SudokuPad sources (sudokupad.ts): pure TypeScript, tested with vitest
 ui/          the Svelte 5 app; host.ts is the MCP App entry, adapters.ts the storage seam
-mcp/         the MCP server (bundled with all its dependencies into mcp/dist/server.js)
+mcp/         the MCP server (bundled with all its dependencies into mcp/dist/server.js); library.ts reads the local library
 shells/web/  the PWA: manifest, icons, service worker, entry
 skills/      the coaching skill
 scripts/     generate-example.ts makes the bundled puzzle from a seed; pack.mjs makes the release archive
@@ -143,4 +186,5 @@ and runs the MCP smoke test against the extracted server.
 
 The only bundled puzzle comes from `scripts/generate-example.ts`: a seeded random fill, then clues
 removed while the solution stays unique. No puzzle in this repository comes from a book, a site or
-another collection.
+another collection. SudokuPad puzzles you import or keep in the local library stay on your device; the tests use
+small puzzles written for them.

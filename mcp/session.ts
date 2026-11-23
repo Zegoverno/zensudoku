@@ -1,26 +1,69 @@
 // The server's memory of the open game: the puzzle and the board the UI last reported (or the
 // givens, when nothing has been reported). One session per server process; a host that runs the
-// plugin per conversation gets one game per conversation.
-import { CATALOG, customPuzzle, findPuzzle, gridText } from '../core/sudoku.ts';
+// plugin per conversation gets one game per conversation. Library puzzles (`lib-<id>`) are read
+// from the local library when first needed; a SudokuPad source given to zensudoku_new is kept for
+// the life of the process.
+import { CATALOG, LIBRARY_PREFIX, customPuzzle, findPuzzle as findKnown, gridText, padPuzzle } from '../core/sudoku.ts';
 import type { Puzzle } from '../core/sudoku.ts';
 import { sizeOf } from '../core/sudoku-extra.ts';
+import { libraryEntry } from './library.ts';
+import type { LibraryEntry } from './library.ts';
 
-export interface Session { puzzle: Puzzle; cells: number[]; selected: number }
+export interface Session { puzzle: Puzzle; cells: number[]; selected: number; source?: string }
 
 let current: Session | null = null;
+const sources = new Map<string, string>();
+
+/** The library entry's puzzle, or why it cannot be opened. */
+export function libraryPuzzle(entry: LibraryEntry): Puzzle | string {
+  const { id, collection, number, title, author, video } = entry;
+  const p = padPuzzle(entry.source, { id, collection, number, title, author, video });
+  if (typeof p !== 'string') sources.set(p.id, entry.source);
+  return p;
+}
+
+/** Any puzzle the server can open: the catalog, an entered classic, a SudokuPad source it was given, or the library. */
+export function findPuzzle(id: string): Puzzle | null {
+  const known = findKnown(id);
+  if (known) return known;
+  if (!id.startsWith(LIBRARY_PREFIX)) return null;
+  const entry = libraryEntry(id.slice(LIBRARY_PREFIX.length));
+  const p = entry && libraryPuzzle(entry);
+  return p && typeof p !== 'string' ? p : null;
+}
+/** The SudokuPad source behind a puzzle id, when there is one. */
+export const sourceOf = (id: string): string | undefined => { if (!sources.has(id)) findPuzzle(id); return sources.get(id); };
+
+const begin = (puzzle: Puzzle) => (current = { puzzle, cells: [...puzzle.givens], selected: 0, source: sources.get(puzzle.id) });
 
 /** The open game; the bundled example, fresh, when none is open yet (a view may be mounted without a tool call). */
 export function open(): Session {
   return current ??= { puzzle: CATALOG[0], cells: [...CATALOG[0].givens], selected: 0 };
 }
 
-/** Opens a puzzle: the bundled example, or the given 81 characters (checked for exactly one solution). */
+/** A SudokuPad source rather than 81 characters: it starts with scl, ctc, fpuz, { or a link. */
+export const isSource = (text: string) => /^\s*(scl|ctc|fpuz|\{|https?:)/.test(text);
+
+/** Opens a puzzle: the bundled example, the given 81 characters (checked for exactly one solution), or a SudokuPad source. */
 export function start(text?: string): Session | string {
-  if (text === undefined || !text.trim()) { current = { puzzle: CATALOG[0], cells: [...CATALOG[0].givens], selected: 0 }; return current; }
+  if (text === undefined || !text.trim()) return begin(CATALOG[0]);
+  if (isSource(text)) {
+    const p = padPuzzle(text);
+    if (typeof p === 'string') return p;
+    sources.set(p.id, text.trim());
+    return begin(p);
+  }
   const p = customPuzzle(text);
   if (typeof p === 'string') return p;
-  current = { puzzle: p, cells: [...p.givens], selected: 0 };
-  return current;
+  return begin(p);
+}
+
+/** Opens a library puzzle by its library id. */
+export function openLibrary(id: string): Session | string {
+  const entry = libraryEntry(id);
+  if (!entry) return `No puzzle "${id}" in the library.`;
+  const p = libraryPuzzle(entry);
+  return typeof p === 'string' ? `"${id}" cannot be played: ${p}` : begin(p);
 }
 
 /** What the UI reports after each change. A string says why it was refused; the game is left as it was. */
@@ -30,7 +73,7 @@ export function report(puzzleId: string, cells: string, selected: number): Sessi
   if (cells.length !== sizeOf(puzzle) || !/^[0-9.]+$/.test(cells)) return 'The board must be one character per cell: a digit, or . for empty.';
   const parsed = [...cells].map(ch => (ch === '.' ? 0 : Number(ch)));
   if (puzzle.givens.some((n, i) => n && parsed[i] !== n)) return 'The board changes a given.';
-  current = { puzzle, cells: parsed, selected: Number.isInteger(selected) && selected >= 0 && selected < parsed.length ? selected : 0 };
+  current = { puzzle, cells: parsed, selected: Number.isInteger(selected) && selected >= 0 && selected < parsed.length ? selected : 0, source: sources.get(puzzle.id) };
   return current;
 }
 
