@@ -161,6 +161,8 @@ export interface PadModel {
   units: { rule: 'row' | 'column' | 'region'; label: string; cells: number[] }[];
   /** Where R1C1 of the played area is in the array. */
   origin: [number, number];
+  /** The played area as a rectangle in cell units: only it gets grid lines, region borders and an outer border. */
+  grid: { x: number; y: number; w: number; h: number };
   title: string; author: string; rules: string[];
   /** One per cell: the digit, 0 for a cell left empty, -1 for any entry; null when the puzzle carries none. */
   solution: number[] | null;
@@ -368,8 +370,15 @@ export function buildModel(p: Record<string, unknown>): PadModel | string {
   const video = typeof videoId === 'string' && /^[A-Za-z0-9_-]{6,20}$/.test(videoId) ? `https://youtu.be/${videoId}` : '';
 
   // The drawing, layer by layer.
-  const under = list(p.underlays).map(obj).map(part => rect(part)).filter((r): r is PadRect => !!r);
-  const over = list(p.overlays).map(obj).map(part => rect(part)).filter((r): r is PadRect => !!r);
+  // A box around a whole outside cell would make it look like a grid cell: such a cell is plain background,
+  // so its overlay keeps its fill and text but loses its border.
+  const unbordered = (r: PadRect | null): PadRect | null => {
+    if (!r || r.stroke === 'none' || r.w < .9 || r.h < .9) return r;
+    const [cr, cc] = [Math.floor(r.y + r.h / 2), Math.floor(r.x + r.w / 2)];
+    return inGrid(cr, cc) && !activeSet.has(at(cr, cc)) ? { ...r, stroke: 'none' } : r;
+  };
+  const under = list(p.underlays).map(obj).map(part => unbordered(rect(part))).filter((r): r is PadRect => !!r);
+  const over = list(p.overlays).map(obj).map(part => unbordered(rect(part))).filter((r): r is PadRect => !!r);
   const paths = [...list(p.arrows).map(obj).flatMap(a => path(a, true)), ...list(p.lines).map(obj).flatMap(l => path(l))];
   const cages: PadCage[] = [];
   for (const cage of list(p.cages).map(obj)) {
@@ -388,7 +397,13 @@ export function buildModel(p: Record<string, unknown>): PadModel | string {
       fill, label: value.trim() && !META.test(value) ? { x: lc + .035, y: lr + .15 + .012, text: value, size: 13 * PX, fill: color(cage.textColor ?? cage.fontC, '#000000'), stroke: 'none', strokeWidth: 0, anchor: 'start', angle: 0, background: 'paper' } : null,
     });
   }
-  const regionEdges = regions.flatMap(reg => outline(reg.map(i => [Math.floor(i / cols), i % cols])));
+  // Like SudokuPad, only the played area is the grid: region borders are clipped to it (a region of an
+  // outside-clue area gets none), and the played area's own outline is the outer border.
+  const gridRect = { x: c0, y: r0, w: c1 - c0 + 1, h: r1 - r0 + 1 };
+  const regionEdges = [
+    ...regions.map(reg => reg.filter(i => activeSet.has(i))).filter(reg => reg.length).flatMap(reg => outline(reg.map(i => [Math.floor(i / cols), i % cols]))),
+    ...outline(active.map(i => [Math.floor(i / cols), i % cols])),
+  ];
 
   // Classic: nothing drawn beyond regions and plain shading, no outside area, and the classic rules
   // alone leave a handful of solutions (a "pick your difficulty" cell may leave a few).
@@ -415,7 +430,7 @@ export function buildModel(p: Record<string, unknown>): PadModel | string {
   const m = .04;
 
   return {
-    rows, cols, digits, givens, active, units, origin: [r0, c0],
+    rows, cols, digits, givens, active, units, origin: [r0, c0], grid: gridRect,
     title: meta.title ?? '', author: meta.author ?? '', rules: meta.rules.filter(Boolean), solution, video, classic,
     under, lines: paths, cages, regionEdges, over, outsideGivens,
     bounds: { x: x0 - m, y: y0 - m, w: x1 - x0 + 2 * m, h: y1 - y0 + 2 * m },

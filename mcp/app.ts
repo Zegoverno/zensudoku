@@ -48,7 +48,7 @@ const rulesText = (d: ReturnType<typeof describe>) => d.rules ? `\nBy ${d.author
 
 /** `loadHtml` returns the built UI; the default reads ui/dist/index.html next to this server's build. */
 export function createServer(loadHtml: () => string = defaultHtml): McpServer {
-  const server = new McpServer({ name: 'zensudoku', version: '0.4.0' });
+  const server = new McpServer({ name: 'zensudoku', version: '0.4.1' });
 
   registerAppResource(server, 'Sudoku board', UI_URI, {
     description: 'The Sudoku board: notes, colors, undo, hints.',

@@ -12,8 +12,9 @@
   const b = $derived(pad.bounds);
   const gridPath = $derived.by(() => {
     const d: string[] = [];
-    for (let r = 0; r <= pad.rows; r++) d.push(`M0 ${r}H${pad.cols}`);
-    for (let c = 0; c <= pad.cols; c++) d.push(`M${c} 0V${pad.rows}`);
+    const g = pad.grid;
+    for (let r = 0; r <= g.h; r++) d.push(`M${g.x} ${g.y + r}H${g.x + g.w}`);
+    for (let c = 0; c <= g.w; c++) d.push(`M${g.x + c} ${g.y}V${g.y + g.h}`);
     return d.join('');
   });
   const segPath = (segs: [number, number, number, number][]) => segs.map(([x1, y1, x2, y2]) => `M${x1} ${y1}L${x2} ${y2}`).join('');
