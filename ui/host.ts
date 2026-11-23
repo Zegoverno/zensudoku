@@ -1,7 +1,10 @@
 // The MCP App entry: the same Sudoku UI inside a host (zenbot, Claude, ChatGPT, …).
 // Built as one HTML file (vite.app.config.ts) and served by mcp/ as ui://zensudoku/app.
 //
-// - A tool result from the agent (zensudoku_new) opens that puzzle.
+// - A tool result from the agent (zensudoku_new, zensudoku_open) opens that puzzle; a SudokuPad puzzle the
+//   board has not seen is fetched first (zensudoku_puzzle, app-only) and its source kept for restoring.
+// - The Library picker lists the server's local library (zensudoku_library); the solution video opens
+//   through the host (app.openLink).
 // - Every change is reported to this server (zensudoku_report, app-only) and to the chat's model
 //   context (updateModelContext), so zensudoku_state and the agent see the board the player sees.
 // - The host's theme, CSS variables and container size are followed live. zenbot's own context
@@ -17,16 +20,17 @@ import { z } from 'zod';
 import './app.css';
 import Sudoku from './Sudoku.svelte';
 import { browserStorage } from './adapters.ts';
-import type { Snapshot } from './adapters.ts';
+import type { LibraryItem, LibrarySource, Snapshot, SourceEntry } from './adapters.ts';
 import { createStore } from './state.svelte.ts';
 import { host, readHost } from './host-state.svelte.ts';
 import { choose } from '../core/sudoku-game.ts';
 import { renderGrid, conflictList } from '../core/text.ts';
-import { findPuzzle } from '../core/sudoku.ts';
+import { LIBRARY_PREFIX, findPuzzle, padPuzzle } from '../core/sudoku.ts';
+import type { LibraryInfo } from '../core/sudoku.ts';
 import { commandId, commandList, focused, keyPayload } from './zen-keys.ts';
 import type { Avail } from './zen-keys.ts';
 
-const app = new App({ name: 'zensudoku', version: '0.3.0' });
+const app = new App({ name: 'zensudoku', version: '0.4.0' });
 const store = createStore(browserStorage());
 
 /** Follows the host's theme, CSS variables and size, and records where zenbot shows us. */
@@ -59,9 +63,34 @@ function report(s: Snapshot) {
   }, 400);
 }
 
-app.ontoolresult = result => {
+type Structured = Record<string, unknown> | undefined;
+/** A SudokuPad puzzle's source from the server, registered and kept; a string says why not. */
+async function fetchSource(puzzleId: string): Promise<SourceEntry | string> {
+  const r = await app.callServerTool({ name: 'zensudoku_puzzle', arguments: { puzzleId } }).catch(() => null);
+  const sc = r?.structuredContent as Structured;
+  if (!r || r.isError || typeof sc?.source !== 'string' || typeof sc.puzzleId !== 'string') return 'The puzzle could not be fetched.';
+  const entry: SourceEntry = { id: sc.puzzleId, source: sc.source, library: (sc.library as LibraryInfo | null) ?? undefined };
+  const p = padPuzzle(entry.source, entry.library);
+  if (typeof p === 'string') return p;
+  store.sources.add(entry);
+  return entry;
+}
+const library: LibrarySource = {
+  async list() {
+    const r = await app.callServerTool({ name: 'zensudoku_library', arguments: {} });
+    const sc = r.structuredContent as Structured;
+    if (r.isError || !sc) throw new Error('no library');
+    const entries = (Array.isArray(sc.entries) ? sc.entries : []) as Omit<LibraryItem, 'puzzleId'>[];
+    return { available: sc.available === true, errors: Number(sc.errors) || 0, entries: entries.map(e => ({ ...e, puzzleId: LIBRARY_PREFIX + e.id })) };
+  },
+  source: item => fetchSource(item.puzzleId),
+};
+
+app.ontoolresult = async result => {
   const sc = result.structuredContent as { puzzleId?: unknown } | undefined;
-  if (typeof sc?.puzzleId === 'string' && choose(store.game, sc.puzzleId)) store.save();
+  if (typeof sc?.puzzleId !== 'string') return;
+  if (!findPuzzle(sc.puzzleId) && typeof await fetchSource(sc.puzzleId) === 'string') return;
+  if (choose(store.game, sc.puzzleId)) store.save();
 };
 app.onhostcontextchanged = () => { applyContext(app.getHostContext()); sendCommands(); };
 
@@ -85,7 +114,8 @@ app.setNotificationHandler(notification('zen/focus'), n => { if (focused(n.param
 const view = mount(Sudoku, {
   target: document.getElementById('app')!,
   props: {
-    store, onchange: report, host,
+    store, onchange: report, host, library,
+    onlink: (url: string) => { void app.openLink({ url }).catch(() => {}); },
     oncommands: (a: Avail) => { avail = a; sendCommands(); },
     onkey: (e: KeyboardEvent, typing: boolean) => { void zen('zen/key', keyPayload(e, typing)); },
   },

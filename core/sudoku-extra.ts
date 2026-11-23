@@ -1,6 +1,8 @@
 // Geometry and the second family of Sudoku constraints. Standard ids remain 0..80; Samurai
 // uses row-major 21x21 ids with 72 inactive holes. Overlap cells have one id and one saved value.
 // Jigsaw replaces boxes; Samurai has five independent row/column/box systems, sharing overlaps.
+// A SudokuPad puzzle (`pad`) brings its own rows × cols array, played area and units.
+import type { PadModel } from './sudokupad.ts';
 export const ORIGINS = [[0,0], [0,12], [6,6], [12,0], [12,12]] as const;
 export interface Arrow { circle: number; cells: number[] }
 export interface Dot { cells: [number, number]; kind: 'white' | 'black' }
@@ -12,17 +14,28 @@ export interface ExtraRules {
   dots?: Dot[];
   littleKillers?: DiagonalSum[];
   regions?: number[][];
+  pad?: PadModel;
 }
 const STANDARD = Array.from({ length: 81 }, (_, i) => i);
 const SAMURAI = Array.from({ length: 441 }, (_, i) => i).filter(i => ORIGINS.some(([r,c]) => i / 21 >= r && Math.floor(i / 21) < r + 9 && i % 21 >= c && i % 21 < c + 9));
-export const widthOf = (p: ExtraRules) => p.variant === 'samurai' ? 21 : 9;
-export const sizeOf = (p: ExtraRules) => widthOf(p) ** 2;
-export const activeCells = (p: ExtraRules): number[] => p.variant === 'samurai' ? SAMURAI : STANDARD;
-export const isActive = (p: ExtraRules, i: number) => Number.isInteger(i) && i >= 0 && i < sizeOf(p) && (p.variant !== 'samurai' || SAMURAI.includes(i));
-export const coord = (p: ExtraRules, i: number) => `R${Math.floor(i / widthOf(p)) + 1}C${i % widthOf(p) + 1}`;
+const padActive = new WeakMap<PadModel, Set<number>>();
+const activeSetOf = (pad: PadModel) => { let s = padActive.get(pad); if (!s) padActive.set(pad, s = new Set(pad.active)); return s; };
+export const widthOf = (p: ExtraRules) => p.pad ? p.pad.cols : p.variant === 'samurai' ? 21 : 9;
+export const heightOf = (p: ExtraRules) => p.pad ? p.pad.rows : widthOf(p);
+export const sizeOf = (p: ExtraRules) => widthOf(p) * heightOf(p);
+/** The digits played: 1..digitsOf. */
+export const digitsOf = (p: ExtraRules) => p.pad ? p.pad.digits : 9;
+export const activeCells = (p: ExtraRules): number[] => p.pad ? p.pad.active : p.variant === 'samurai' ? SAMURAI : STANDARD;
+export const isActive = (p: ExtraRules, i: number) => Number.isInteger(i) && i >= 0 && i < sizeOf(p) && (p.pad ? activeSetOf(p.pad).has(i) : p.variant !== 'samurai' || SAMURAI.includes(i));
+/** R1C1 is the played area's top-left cell (a SudokuPad grid may have clue rows around it). */
+export const coord = (p: ExtraRules, i: number) => {
+  const [r0, c0] = p.pad?.origin ?? [0, 0];
+  return `R${Math.floor(i / widthOf(p)) - r0 + 1}C${i % widthOf(p) - c0 + 1}`;
+};
 export type UnitKind = 'row' | 'column' | 'box' | 'region' | 'diagonal';
 export interface Unit { rule: UnitKind; label: string; cells: number[] }
 export function geometryUnits(p: ExtraRules): Unit[] {
+  if (p.pad) return p.pad.units;
   const out: Unit[] = [], width = widthOf(p);
   for (const [g, [r0,c0]] of (p.variant === 'samurai' ? ORIGINS : [[0,0]] as const).entries()) {
     const label = p.variant === 'samurai' ? `grid ${g + 1} ` : '';
@@ -37,6 +50,13 @@ export function geometryUnits(p: ExtraRules): Unit[] {
   return out;
 }
 export function moveCell(p: ExtraRules, i: number, dr: number, dc: number): number {
+  if (p.pad) {
+    // Within the played area, wrapping at its edges.
+    const { cols, origin: [r0, c0] } = p.pad, rs = activeCells(p).map(j => Math.floor(j / cols)), cs = activeCells(p).map(j => j % cols);
+    const h = Math.max(...rs) - r0 + 1, w = Math.max(...cs) - c0 + 1, mod = (n: number, m: number) => ((n % m) + m) % m;
+    const next = (r0 + mod(Math.floor(i / cols) - r0 + dr, h)) * cols + c0 + mod(i % cols - c0 + dc, w);
+    return isActive(p, next) ? next : i;
+  }
   if (p.variant !== 'samurai') return (i + dr * 9 + dc + 81) % 81;
   const w=widthOf(p); let r=Math.floor(i/w)+dr, c=i%w+dc;
   while(r>=0 && r<w && c>=0 && c<w) {

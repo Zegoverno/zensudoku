@@ -3,7 +3,7 @@
 // plain object (ui/state.svelte.ts makes it reactive), so tests need no DOM.
 import { CATALOG, complete, filtered, findPuzzle, nextPuzzle, DIFFICULTIES, VARIANTS } from './sudoku.ts';
 import type { Difficulty, Puzzle, Variant } from './sudoku.ts';
-import { isActive, sizeOf } from './sudoku-extra.ts';
+import { activeCells, digitsOf, isActive, sizeOf } from './sudoku-extra.ts';
 
 export type Mode = 'value' | 'corner' | 'center';
 export const MODES: Mode[] = ['value', 'corner', 'center'];
@@ -31,7 +31,7 @@ export const bit = (n: number) => 1 << (n - 1);
 export const notesOf = (mask: number): number[] => [1, 2, 3, 4, 5, 6, 7, 8, 9].filter(n => mask & bit(n));
 
 export function blankBoard(p: Puzzle): Board {
-  return { cells: [...p.givens], corner: Array(sizeOf(p)).fill(0), center: Array(sizeOf(p)).fill(0), colors: Array(sizeOf(p)).fill(0), selected: 0 };
+  return { cells: [...p.givens], corner: Array(sizeOf(p)).fill(0), center: Array(sizeOf(p)).fill(0), colors: Array(sizeOf(p)).fill(0), selected: activeCells(p)[0] ?? 0 };
 }
 const isBlank = (b: Board, p: Puzzle) => b.cells.every((n, i) => n === p.givens[i]) && !b.corner.some(Boolean) && !b.center.some(Boolean) && !b.colors.some(Boolean);
 
@@ -76,13 +76,13 @@ const editable = (g: Game) => { const p = puzzleOf(g), b = boardOf(g); return !p
 
 /** Puts a number in the selected cell (its notes go); givens and a finished board are left alone. */
 export function place(g: Game, n: number): boolean {
-  if (!(n >= 1 && n <= 9) || !editable(g)) return false;
+  if (!(Number.isInteger(n) && n >= 1 && n <= digitsOf(puzzleOf(g))) || !editable(g)) return false;
   return commit(g, [{ i: boardOf(g).selected, to: { v: n, c: 0, m: 0 } }]);
 }
 /** Adds or removes a note; only an empty, non-given cell takes notes. */
 export function toggleNote(g: Game, kind: 'corner' | 'center', n: number): boolean {
   const b = boardOf(g);
-  if (!(n >= 1 && n <= 9) || !editable(g) || b.cells[b.selected]) return false;
+  if (!(Number.isInteger(n) && n >= 1 && n <= digitsOf(puzzleOf(g))) || !editable(g) || b.cells[b.selected]) return false;
   const mask = kind === 'corner' ? b.corner[b.selected] : b.center[b.selected];
   return commit(g, [{ i: b.selected, to: kind === 'corner' ? { c: mask ^ bit(n) } : { m: mask ^ bit(n) } }]);
 }
@@ -163,7 +163,7 @@ const ints = (a: unknown, max: number, length: number): a is number[] =>
   Array.isArray(a) && a.length === length && a.every(n => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= max);
 /** A saved board for puzzle `p`, or null when it is not one: wrong shape, a changed given, notes under a number. */
 function validBoard(x: any, p: Puzzle): Board | null {
-  if (!x || typeof x !== 'object' || !ints(x.cells, 9, sizeOf(p)) || !ints(x.corner, 511, sizeOf(p)) || !ints(x.center, 511, sizeOf(p)) ||
+  if (!x || typeof x !== 'object' || !ints(x.cells, digitsOf(p), sizeOf(p)) || !ints(x.corner, 511, sizeOf(p)) || !ints(x.center, 511, sizeOf(p)) ||
     !ints(x.colors, COLORS.length, sizeOf(p)) || !isActive(p, x.selected)) return null;
   for (let i = 0; i < sizeOf(p); i++) {
     if (!isActive(p,i) && (x.cells[i] || x.corner[i] || x.center[i] || x.colors[i])) return null;

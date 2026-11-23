@@ -5,17 +5,20 @@
 // puzzle carries one variant's constraints. Jigsaw replaces boxes; Samurai shares five grids.
 // Difficulty is a provisional per-puzzle rating, not a measurement. A classic puzzle the player
 // types in has the id `custom-<81 digits>`: it is checked for exactly one solution before it is played.
+// A SudokuPad puzzle (variant `sudokupad`, core/sudokupad.ts) is registered when it is opened, from the
+// local library (`lib-<id>`) or an imported source (`pad-<hash>`); it brings its own grid, units and drawing.
 import raw from './catalog.json';
-import { extraClues, extraViolations, geometryUnits, isActive, parseExtra, sizeOf } from './sudoku-extra.ts';
+import { digitsOf, extraClues, extraViolations, geometryUnits, isActive, parseExtra, sizeOf } from './sudoku-extra.ts';
 import type { ExtraRules } from './sudoku-extra.ts';
+import { parseSudokuPad, solveUnits } from './sudokupad.ts';
 
-export type Variant = 'classic' | 'diagonal' | 'killer' | 'sandwich' | 'thermo' | 'consecutive' | 'nonconsecutive' | 'arrow' | 'renban' | 'kropki' | 'littlekiller' | 'jigsaw' | 'samurai';
+export type Variant = 'classic' | 'diagonal' | 'killer' | 'sandwich' | 'thermo' | 'consecutive' | 'nonconsecutive' | 'arrow' | 'renban' | 'kropki' | 'littlekiller' | 'jigsaw' | 'samurai' | 'sudokupad';
 export type Difficulty = 'easy' | 'medium' | 'hard';
 export const VARIANTS: Variant[] = ['classic', 'diagonal', 'killer', 'sandwich', 'thermo', 'consecutive', 'nonconsecutive', 'arrow', 'renban', 'kropki', 'littlekiller', 'jigsaw', 'samurai'];
 export const DIFFICULTIES: Difficulty[] = ['easy', 'medium', 'hard'];
 export const VARIANT_LABEL: Record<Variant, string> = {
   classic: 'Classic', diagonal: 'Diagonal', killer: 'Killer', sandwich: 'Sandwich', thermo: 'Thermo',
-  consecutive: 'Consecutive', nonconsecutive: 'Non-consecutive', arrow: 'Arrow', renban: 'Renban', kropki: 'Kropki', littlekiller: 'Little Killer', jigsaw: 'Jigsaw / Irregular', samurai: 'Samurai',
+  consecutive: 'Consecutive', nonconsecutive: 'Non-consecutive', arrow: 'Arrow', renban: 'Renban', kropki: 'Kropki', littlekiller: 'Little Killer', jigsaw: 'Jigsaw / Irregular', samurai: 'Samurai', sudokupad: 'SudokuPad',
 };
 export const VARIANT_RULE: Record<Variant, string> = {
   classic: 'One of each number in every row, column and box.',
@@ -31,6 +34,7 @@ export const VARIANT_RULE: Record<Variant, string> = {
   littlekiller: 'Classic rules. Each outside clue sums the indicated diagonal. Digits may repeat along a diagonal.',
   jigsaw: 'Each row, column and outlined irregular region holds 1–9. Irregular regions replace the usual boxes.',
   samurai: 'Five overlapping Sudoku grids. Each grid follows classic rules; overlapping cells share the same value and notes.',
+  sudokupad: 'The rules are the puzzle\'s own (below). Rows, columns and regions are checked for repeats here.',
 };
 
 export interface Cage { sum: number; cells: number[] }
@@ -49,8 +53,13 @@ export interface Puzzle extends Rules {
   difficulty: Difficulty | null;
   rating: string;
   givens: number[];
+  /** The digit of each cell; for a SudokuPad puzzle 0 where it is not known (empty when there is no solution). */
   solution: number[];
+  /** A SudokuPad puzzle's library entry: where it comes from. */
+  library?: LibraryInfo;
 }
+/** What the local library says about a puzzle (core/library.ts reads it). */
+export interface LibraryInfo { id: string; collection?: string; number?: string; title?: string; author?: string; video?: string }
 
 const NO_LINES: (number | null)[] = Array(9).fill(null);
 export const CLASSIC: Rules = { variant: 'classic', cages: [], thermometers: [], rowSandwich: NO_LINES, colSandwich: NO_LINES, consecutive: [] };
@@ -141,8 +150,27 @@ export function violations(cells: number[], p: Rules = CLASSIC): Violation[] {
 export function conflicts(cells: number[], p: Rules = CLASSIC): Set<number> {
   return new Set(violations(cells, p).flatMap(v => v.cells));
 }
-export const complete = (cells: number[], p: Rules = CLASSIC) =>
-  cells.length === sizeOf(p) && cells.every((n,i) => Number.isInteger(n) && (isActive(p,i) ? n >= 1 && n <= 9 : n === 0)) && violations(cells, p).length === 0;
+/**
+ * Where a board stands: `solved`; `full`, every cell filled with no repeat but the puzzle's own rules
+ * cannot be checked here (a SudokuPad variant without a solution); or `open`.
+ */
+export type Verdict = 'solved' | 'full' | 'open';
+export function verdict(cells: number[], p: Rules = CLASSIC): Verdict {
+  if (cells.length !== sizeOf(p) || !cells.every(n => Number.isInteger(n))) return 'open';
+  const pad = p.pad;
+  if (pad?.solution) return activeCellsOf(p).every(i => pad.solution![i] < 0 || cells[i] === pad.solution![i]) ? 'solved' : 'open';
+  const full = cells.every((n, i) => isActive(p, i) ? n >= 1 && n <= digitsOf(p) : n === 0) && violations(cells, p).length === 0;
+  if (!full) return 'open';
+  return !pad || pad.classic ? 'solved' : 'full';
+}
+const activeCellsOf = (p: Rules) => p.pad ? p.pad.active : Array.from({ length: sizeOf(p) }, (_, i) => i).filter(i => isActive(p, i));
+export const complete = (cells: number[], p: Rules = CLASSIC) => verdict(cells, p) === 'solved';
+/** Entries that are not the solution's (a count; 0 when the solution is not known). A SudokuPad cell meant to stay empty counts too. */
+export function wrongEntries(cells: number[], p: Puzzle): number {
+  const sol = p.pad ? p.pad.solution : p.solution;
+  if (!sol) return 0;
+  return cells.filter((n, i) => n && !p.givens[i] && (p.pad ? sol[i] >= 0 && n !== sol[i] : n !== sol[i])).length;
+}
 
 /** Cells that share a unit (or a thermometer) with `a`, for the soft highlight. */
 export function related(p: Rules, a: number, b: number): boolean {
@@ -316,9 +344,47 @@ export function customPuzzle(text: string): Puzzle | string {
   return made;
 }
 
-/** A catalog id or `custom-<81 digits>`; null for anything else. */
+// ---- SudokuPad puzzles ----
+export const LIBRARY_PREFIX = 'lib-', PAD_PREFIX = 'pad-';
+const registry = new Map<string, Puzzle>();
+/** A short, stable id for an imported source. */
+export function sourceId(source: string): string {
+  let a = 0x811c9dc5, b = 0x01000193;
+  for (let i = 0; i < source.length; i++) { const c = source.charCodeAt(i); a = Math.imul(a ^ c, 0x01000193) >>> 0; b = Math.imul(b ^ c, 0x5bd1e995) >>> 0; }
+  return PAD_PREFIX + a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0');
+}
+/** A SudokuPad source as a puzzle, registered under `id` (by default from the source) so findPuzzle knows it. */
+export function padPuzzle(source: string, library?: LibraryInfo): Puzzle | string {
+  const id = library ? LIBRARY_PREFIX + library.id : sourceId(source.trim());
+  const known = registry.get(id);
+  if (known) return known;
+  const pad = parseSudokuPad(source);
+  if (typeof pad === 'string') return pad;
+  const name = [library?.number, library?.title || pad.title].filter(Boolean).join(' · ') || 'SudokuPad puzzle';
+  const author = library?.author || pad.author;
+  const solution = pad.solution ? pad.solution.map(n => Math.max(0, n)) : [];
+  const p: Puzzle = {
+    ...CLASSIC, variant: 'sudokupad', id, name, difficulty: null, rating: author ? `By ${author}.` : 'Imported from SudokuPad.',
+    givens: pad.givens, solution, pad: { ...pad, author, title: library?.title || pad.title, video: library?.video && /^https:\/\//.test(library.video) ? library.video : pad.video },
+    library,
+  };
+  if (registry.size > 2000) registry.clear();
+  registry.set(id, p);
+  return p;
+}
+let resolve: ((id: string) => Puzzle | null) | null = null;
+/** Where findPuzzle looks for a SudokuPad puzzle it has not seen: the app's saved sources, the server's library. */
+export function setPuzzleResolver(fn: ((id: string) => Puzzle | null) | null) { resolve = fn; }
+/** Whether a hint can be trusted: the classic rules are the whole puzzle. */
+export const hintable = (p: Puzzle) => !p.pad || p.pad.classic;
+/** Classic solutions left from these cells, for a SudokuPad classic grid (a "pick a cell" puzzle has several). */
+export const padSolutions = (p: Puzzle, cells: number[]) => p.pad ? solveUnits(cells, p.pad.active, p.pad.units, p.pad.digits, 2) : null;
+
+/** A catalog id, `custom-<81 digits>` or a registered SudokuPad puzzle; null for anything else. */
 export function findPuzzle(id: unknown): Puzzle | null {
   if (typeof id !== 'string') return null;
+  const pad = registry.get(id) ?? ((id.startsWith(LIBRARY_PREFIX) || id.startsWith(PAD_PREFIX)) && resolve ? resolve(id) : null);
+  if (pad) return pad;
   if (id.startsWith(CUSTOM_PREFIX)) {
     const rest = id.slice(CUSTOM_PREFIX.length);
     if (!/^[0-9]{81}$/.test(rest)) return null;
