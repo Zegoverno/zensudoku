@@ -10,8 +10,10 @@ import type { SourceStore, StorageAdapter } from './adapters.ts';
 export interface Store { game: Game; save(): void; sources: SourceStore }
 export function createStore(storage: StorageAdapter, sources: SourceStore = sourceStorage()): Store {
   setPuzzleResolver(id => {
-    const e = sources.get(id), p = e && padPuzzle(e.source, e.library);
-    return p && typeof p !== 'string' ? p : null;
+    try {
+      const e = sources.get(id), p = e && padPuzzle(e.source, e.library);
+      return p && typeof p !== 'string' && p.id === id ? p : null;
+    } catch { return null; }
   });
   const game: Game = $state(load(storage.read()));
   return { game, save: () => storage.write(serialize(game)), sources };

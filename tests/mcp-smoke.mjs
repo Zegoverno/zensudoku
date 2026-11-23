@@ -27,10 +27,11 @@ try {
   // tools
   const { tools } = await client.listTools();
   const names = tools.map(t => t.name).sort();
-  assert.deepEqual(names, ['zensudoku_check', 'zensudoku_hint', 'zensudoku_library', 'zensudoku_new', 'zensudoku_open', 'zensudoku_puzzle', 'zensudoku_report', 'zensudoku_state']);
+  assert.deepEqual(names, ['zensudoku_check', 'zensudoku_hint', 'zensudoku_library', 'zensudoku_new', 'zensudoku_open', 'zensudoku_puzzle', 'zensudoku_report', 'zensudoku_resume', 'zensudoku_state']);
   const byName = Object.fromEntries(tools.map(t => [t.name, t]));
   assert.equal(byName.zensudoku_new._meta.ui.resourceUri, 'ui://zensudoku/app');
   assert.deepEqual(byName.zensudoku_report._meta.ui.visibility, ['app']);
+  assert.deepEqual(byName.zensudoku_resume._meta.ui.visibility, ['app']);
   assert.deepEqual(byName.zensudoku_puzzle._meta.ui.visibility, ['app']);
   assert.equal(byName.zensudoku_open._meta.ui.resourceUri, 'ui://zensudoku/app');
   assert.equal(byName.zensudoku_library._meta?.ui?.visibility, undefined, 'the app lists the library too');
