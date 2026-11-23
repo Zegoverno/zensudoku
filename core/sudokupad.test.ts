@@ -4,7 +4,7 @@ import * as LZ from 'lz-string';
 import { describe, expect, it } from 'vitest';
 import { buildModel, decodeSource, fromFPuzzles, outline, parseSudokuPad, readCompact, solveUnits } from './sudokupad.ts';
 import type { PadModel } from './sudokupad.ts';
-import { LIBRARY_PREFIX, findPuzzle, padPuzzle, sourceId, verdict, violations, wrongEntries } from './sudoku.ts';
+import { LIBRARY_PREFIX, chessRelated, findPuzzle, padPuzzle, sourceId, verdict, violations, wrongEntries } from './sudoku.ts';
 import type { Puzzle } from './sudoku.ts';
 import { coord, digitsOf, isActive, moveCell, sizeOf } from './sudoku-extra.ts';
 import { blankBoard, choose, enter, newGame, place, restore, select, serialize } from './sudoku-game.ts';
@@ -208,6 +208,25 @@ describe('f-puzzles', () => {
     const sp = fromFPuzzles({ size: 4, grid: Array.from({ length: 4 }, () => Array.from({ length: 4 }, () => ({ region: null }))), renban: [{ lines: [['R1C1', 'R1C2']] }] });
     expect(sp.regions).toEqual([]);
     expect(sp.lines).toEqual([]);
+  });
+});
+
+describe('chess-move rules', () => {
+  const grid = Array.from({ length: 9 }, () => Array.from({ length: 9 }, () => ({})));
+  it('come from the f-puzzles flags and tie cells a knight\'s or king\'s move away', () => {
+    const p = puzzle('fpuz' + lz.compressToBase64(JSON.stringify({ size: 9, grid, antiknight: true, antiking: true })));
+    expect(p.pad!.chess).toEqual({ knight: true, king: true });
+    const at = (r: number, c: number) => r * 9 + c, centre = at(4, 4);
+    expect(chessRelated(p, centre, at(2, 3))).toBe('knight');
+    expect(chessRelated(p, centre, at(5, 5))).toBe('king');
+    expect(chessRelated(p, centre, at(4, 6))).toBeNull();
+    expect(chessRelated(p, centre, centre)).toBeNull();
+  });
+  it('come from the rule text, and are absent otherwise', () => {
+    const knight = puzzle('fpuz' + lz.compressToBase64(JSON.stringify({ size: 9, grid, ruleset: 'Cells a knight\'s move apart cannot contain the same digit.' })));
+    expect(knight.pad!.chess).toEqual({ knight: true, king: false });
+    expect(chessRelated(knight, 40, 41)).toBeNull();
+    expect(model(scl(TINY)).chess).toEqual({ knight: false, king: false });
   });
 });
 

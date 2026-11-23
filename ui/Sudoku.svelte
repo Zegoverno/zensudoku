@@ -2,7 +2,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import type { Store } from './state.svelte.ts';
   import type { Snapshot } from './adapters.ts';
-  import { CATALOG, CUSTOM_PREFIX, VARIANT_LABEL, VARIANT_RULE, clueList, customPuzzle, filtered, findPuzzle, gridText, hintable, padPuzzle, related, playVerdict, violations } from '../core/sudoku.ts';
+  import { CATALOG, CUSTOM_PREFIX, VARIANT_LABEL, VARIANT_RULE, clueList, customPuzzle, filtered, findPuzzle, gridText, hintable, padPuzzle, related, chessRelated, playVerdict, violations } from '../core/sudoku.ts';
   import type { Puzzle } from '../core/sudoku.ts';
   import { COLORS, MODES, bit, choose, enter, erase, isDone, next, notesOf, peekBoard, puzzleOf, redo, restart, select as selectCell, setAutoClear, setColor, toggleNote, undo } from '../core/sudoku-game.ts';
   import { formatTime } from '../core/play-time.ts';
@@ -51,6 +51,8 @@
   const activeCellsList = $derived(activeCells(puzzle));
   const outlinedRegions = $derived(geometryUnits(puzzle).filter(u => u.rule === 'box' || u.rule === 'region').map(u => u.cells));
   const peerSet = $derived(new Set(activeCellsList.filter(i => related(puzzle, board.selected, i))));
+  // Cells a knight's or king's move away, on puzzles with that rule: a second, distinct tint.
+  const chessSet = $derived(new Set(activeCellsList.filter(i => !peerSet.has(i) && chessRelated(puzzle, board.selected, i))));
   const choices = $derived(filtered(game.variant, game.difficulty));
   // Entered puzzles are not catalog entries, but stay reachable after browsing away.
   const entered = $derived(Object.keys(game.boards).map(findPuzzle).filter((p): p is Puzzle => !!p && p.id.startsWith(CUSTOM_PREFIX)));
@@ -295,6 +297,7 @@
       class:given={!!puzzle.givens[i]}
       class:selected={board.selected === i}
       class:related={board.selected !== i && peerSet.has(i)}
+      class:chess={board.selected !== i && chessSet.has(i)}
       class:matching={!!n && n === board.cells[board.selected]}
       class:conflict={bad.has(i)}
       class:hinted={hintCell === i}
@@ -517,12 +520,15 @@
   .info .rating, .info .rule { color: var(--dim); font-size: 12px; }
   /* A SudokuPad puzzle: its own drawing under transparent cells placed on it (PadDrawing.svelte). */
   .grid.pad { display: block; position: relative; border: 0; border-radius: 0; box-shadow: none; overflow: visible; }
-  .grid.pad button[data-cell] { position: absolute; border: 0; background: transparent; z-index: 1; }
+  .grid.pad button[data-cell] { position: absolute; border: 0; z-index: 1; }
+  /* Low specificity, so the selected, peer, chess and matching tints below still show over the drawing. */
+  .grid.pad :where(button[data-cell]) { background: transparent; }
   .grid.pad .v { font-size: max(13px, calc(var(--cw) * .58cqw)); }
   .grid.pad .corner { font-size: max(7px, calc(var(--cw) * .25cqw)); }
   .grid.pad .center { font-size: max(8px, calc(var(--cw) * .28cqw)); }
   .grid.pad .given { color: var(--ink); }
-  .grid.pad .related { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .grid.pad .related { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .grid.pad .chess { background: color-mix(in srgb, var(--chess, #d08a1e) 24%, transparent); }
   .info .rules { max-height: 12em; overflow-y: auto; margin: 6px 0 4px; padding-right: 4px; color: var(--ink); font-size: 12.5px; line-height: 1.45; }
   .info .rules p { margin: 0 0 6px; }
   .info .video { display: inline-block; margin-top: 4px; color: var(--accent); font-size: 12.5px; }
@@ -568,7 +574,8 @@
   .grid button { position: relative; min-width: 0; min-height: 0; align-self: stretch; border: 0; border-right: 1px solid color-mix(in srgb, var(--ink) 32%, var(--paper)); border-bottom: 1px solid color-mix(in srgb, var(--ink) 32%, var(--paper)); padding: 0; border-radius: 0; color: var(--dim); overflow: hidden; }
   .v { position: relative; font-size: max(15px, 5.6cqw); }
   .grid .given { color: var(--ink); font-weight: 650; }
-  .grid .related { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .grid .related { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .grid .chess { background: color-mix(in srgb, var(--chess, #d08a1e) 22%, transparent); }
   .grid .matching { background: color-mix(in srgb, var(--accent) 18%, transparent); }
   .grid .selected { background: color-mix(in srgb, var(--accent) 28%, transparent); box-shadow: inset 0 0 0 2px var(--accent); }
   .grid .conflict .v { color: var(--err); text-decoration: underline wavy; }

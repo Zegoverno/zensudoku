@@ -188,6 +188,18 @@ export function related(p: Rules, a: number, b: number): boolean {
     (p.arrows ?? []).some(t => [t.circle,...t.cells].includes(a) && [t.circle,...t.cells].includes(b)) ||
     (p.renbans ?? []).some(t => t.includes(a) && t.includes(b)) || (p.littleKillers ?? []).some(t => t.cells.includes(a) && t.cells.includes(b));
 }
+/**
+ * The chess rule that ties `b` to `a` when the puzzle has one, for a second highlight: 'knight' or
+ * 'king' when `b` is that piece's move away from `a` (king wins when both apply), else null.
+ */
+export function chessRelated(p: Rules, a: number, b: number): 'knight' | 'king' | null {
+  const chess = p.pad?.chess;
+  if (!chess || a === b || (!chess.knight && !chess.king)) return null;
+  const w = p.pad!.cols, dr = Math.abs(Math.floor(a / w) - Math.floor(b / w)), dc = Math.abs(a % w - b % w);
+  if (chess.king && dr <= 1 && dc <= 1) return 'king';
+  if (chess.knight && dr * dc === 2) return 'knight';
+  return null;
+}
 /** Classic peers (row, column, box). */
 export function peers(a: number, b: number): boolean {
   return Math.floor(a / 9) === Math.floor(b / 9) || a % 9 === b % 9 ||

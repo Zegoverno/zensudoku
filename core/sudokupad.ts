@@ -174,6 +174,8 @@ export interface PadModel {
   video: string;
   /** No drawing beyond regions and plain shading, and the classic rules leave only a few solutions. */
   classic: boolean;
+  /** Chess-move rules: equal digits may not sit a knight's (or king's) move apart. */
+  chess: { knight: boolean; king: boolean };
   under: PadRect[]; lines: PadPath[]; cages: PadCage[]; regionEdges: Seg[]; over: PadRect[];
   /** Givens outside the played area, drawn like clues. */
   outsideGivens: PadText[];
@@ -448,10 +450,16 @@ export function buildModel(p: Record<string, unknown>): PadModel | string {
   const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
   x0 = clamp(x0, -6, 0); y0 = clamp(y0, -6, 0); x1 = clamp(x1, cols, cols + 6); y1 = clamp(y1, rows, rows + 6);
   const m = .04;
+  // Chess rules come as an f-puzzles flag ("antiknight: true") or in the rule text.
+  const ruleText = meta.rules.join(' ');
+  const chess = {
+    knight: meta.other.includes('antiknight') || /anti[- ]?knight|knight'?s?[- ]move/i.test(ruleText),
+    king: meta.other.includes('antiking') || /anti[- ]?king|king'?s?[- ]move/i.test(ruleText),
+  };
 
   return {
     rows, cols, digits, givens, active, units, origin: [r0, c0], grid: gridRect,
-    title: meta.title ?? '', author: meta.author ?? '', rules: meta.rules.filter(Boolean), solution, video, classic,
+    title: meta.title ?? '', author: meta.author ?? '', rules: meta.rules.filter(Boolean), solution, video, classic, chess,
     under, lines: paths, cages, regionEdges, over, outsideGivens, sandwichClues,
     bounds: { x: x0 - m, y: y0 - m, w: x1 - x0 + 2 * m, h: y1 - y0 + 2 * m },
   };
