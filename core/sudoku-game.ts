@@ -3,7 +3,7 @@
 // plain object (ui/state.svelte.ts makes it reactive), so tests need no DOM.
 import { CATALOG, complete, filtered, findPuzzle, nextPuzzle, DIFFICULTIES, VARIANTS } from './sudoku.ts';
 import type { Difficulty, Puzzle, Variant } from './sudoku.ts';
-import { activeCells, digitsOf, isActive, sizeOf } from './sudoku-extra.ts';
+import { activeCells, digitsOf, geometryUnits, isActive, sizeOf } from './sudoku-extra.ts';
 
 export type Mode = 'value' | 'corner' | 'center';
 export const MODES: Mode[] = ['value', 'corner', 'center'];
@@ -23,6 +23,8 @@ export interface Game {
   difficulty: Difficulty | 'all';
   /** Progress per puzzle, so browsing the catalog never loses a board. */
   boards: Record<string, Board>;
+  /** Placing a digit removes it from the notes of the cells that see it (on by default). */
+  autoClear: boolean;
   /** Not saved: lasts while the page is open. */
   history: Record<string, History>;
 }
@@ -36,7 +38,7 @@ export function blankBoard(p: Puzzle): Board {
 const isBlank = (b: Board, p: Puzzle) => b.cells.every((n, i) => n === p.givens[i]) && !b.corner.some(Boolean) && !b.center.some(Boolean) && !b.colors.some(Boolean);
 
 export function newGame(p: Puzzle = CATALOG[0]): Game {
-  return { puzzleId: p.id, mode: 'value', variant: 'all', difficulty: 'all', boards: { [p.id]: blankBoard(p) }, history: {} };
+  return { puzzleId: p.id, mode: 'value', variant: 'all', difficulty: 'all', autoClear: true, boards: { [p.id]: blankBoard(p) }, history: {} };
 }
 export const puzzleOf = (g: Game): Puzzle => findPuzzle(g.puzzleId) ?? CATALOG[0];
 export function boardOf(g: Game): Board {
@@ -74,11 +76,26 @@ export function select(g: Game, i: number): boolean {
 }
 const editable = (g: Game) => { const p = puzzleOf(g), b = boardOf(g); return !p.givens[b.selected] && !isDone(g); };
 
-/** Puts a number in the selected cell (its notes go); givens and a finished board are left alone. */
-export function place(g: Game, n: number): boolean {
-  if (!(Number.isInteger(n) && n >= 1 && n <= digitsOf(puzzleOf(g))) || !editable(g)) return false;
-  return commit(g, [{ i: boardOf(g).selected, to: { v: n, c: 0, m: 0 } }]);
+/** The cells that see cell `i` under the basic rules: a row, column, box or region (or a diagonal, samurai
+ *  grid, SudokuPad region) shared with it. Variant clues (cages, thermometers, dots…) do not count. */
+export function seenBy(p: Puzzle, i: number): number[] {
+  const out = new Set<number>();
+  for (const u of geometryUnits(p)) if (u.cells.includes(i)) for (const j of u.cells) if (j !== i) out.add(j);
+  return [...out].sort((a, b) => a - b);
 }
+/** Puts a number in the selected cell (its notes go); givens and a finished board are left alone. With
+ *  `autoClear`, the number also leaves the corner and center notes of every cell that sees it, in the same undo step. */
+export function place(g: Game, n: number): boolean {
+  const p = puzzleOf(g);
+  if (!(Number.isInteger(n) && n >= 1 && n <= digitsOf(p)) || !editable(g)) return false;
+  const b = boardOf(g), i = b.selected, changes: { i: number; to: Partial<CellState> }[] = [{ i, to: { v: n, c: 0, m: 0 } }];
+  if (g.autoClear && b.cells[i] !== n) {
+    for (const j of seenBy(p, i)) if ((b.corner[j] | b.center[j]) & bit(n)) changes.push({ i: j, to: { c: b.corner[j] & ~bit(n), m: b.center[j] & ~bit(n) } });
+  }
+  return commit(g, changes);
+}
+/** Turns clearing notes on placement on or off. */
+export function setAutoClear(g: Game, on: boolean): void { g.autoClear = on; }
 /** Adds or removes a note; only an empty, non-given cell takes notes. */
 export function toggleNote(g: Game, kind: 'corner' | 'center', n: number): boolean {
   const b = boardOf(g);
@@ -156,7 +173,7 @@ export function serialize(g: Game): string {
     const p = findPuzzle(id);
     if (p && (id === g.puzzleId || !isBlank(b, p))) boards[id] = b;
   }
-  return JSON.stringify({ version: 1, puzzleId: g.puzzleId, mode: g.mode, variant: g.variant, difficulty: g.difficulty, boards });
+  return JSON.stringify({ version: 1, puzzleId: g.puzzleId, mode: g.mode, variant: g.variant, difficulty: g.difficulty, autoClear: g.autoClear, boards });
 }
 
 const ints = (a: unknown, max: number, length: number): a is number[] =>
@@ -185,6 +202,7 @@ export function restore(raw: string | null): Game | null {
     }
     const g: Game = {
       puzzleId: '', boards, history: {},
+      autoClear: s.autoClear !== false,
       mode: MODES.includes(s.mode) ? s.mode : 'value',
       variant: s.variant === 'all' || VARIANTS.includes(s.variant) ? s.variant : 'all',
       difficulty: s.difficulty === 'all' || DIFFICULTIES.includes(s.difficulty) ? s.difficulty : 'all',

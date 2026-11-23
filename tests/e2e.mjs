@@ -13,6 +13,8 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import LZ from 'lz-string';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const dist = path.join(root, 'shells/web/dist');
@@ -35,6 +37,12 @@ const VARS = { '--color-background-primary': '#f4f1ea', '--color-background-seco
 const HOST = `<!doctype html><meta charset=utf-8><title>host</title><body style="margin:0"><iframe id=f sandbox="allow-scripts" style="width:560px;height:1100px;border:0"></iframe><script>
 const VARS = ${JSON.stringify(VARS)};
 let ctx = { theme: 'dark', displayMode: 'inline', styles: { variables: VARS }, containerDimensions: { width: 560, height: 1100 }, zen: { pane: 'board', phone: false, slot: 'game', headingFont: 'Georgia, serif' } };
+const helper = location.pathname === '/helper-host.html';
+if (helper) {
+  frameSize();
+  ctx = { ...ctx, theme: 'dark', styles: undefined, containerDimensions: { width: 360, height: 850 }, zen: { pane: 'side', slot: 'view' } };
+}
+function frameSize() { const el = document.getElementById('f'); el.style.width = '360px'; el.style.height = '850px'; }
 window.calls = []; window.contexts = []; window.zenmsgs = []; window.links = []; window.ready = false; window.toolReply = null;
 const frame = document.getElementById('f');
 const reply = (id, result) => frame.contentWindow.postMessage({ jsonrpc: '2.0', id, result }, '*');
@@ -44,7 +52,7 @@ addEventListener('message', e => {
   if (m.method === 'ui/initialize') reply(m.id, { protocolVersion: '2026-01-26', hostInfo: { name: 'test-host', version: '0' }, hostCapabilities: {}, hostContext: ctx });
   else if (m.method === 'ui/notifications/initialized') window.ready = true;
   else if (m.method && m.method.startsWith('zen/')) window.zenmsgs.push(m);
-  else if (m.method === 'tools/call') { window.calls.push(m.params); reply(m.id, (window.toolReply && window.toolReply(m.params)) || { content: [{ type: 'text', text: 'ok' }] }); }
+  else if (m.method === 'tools/call') { window.calls.push(m.params); if (window.liveTools && (!window.ignoreReports || m.params.name !== 'zensudoku_report')) window.liveTools(m.params).then(result => reply(m.id, result)); else reply(m.id, (window.toolReply && window.toolReply(m.params)) || { content: [{ type: 'text', text: 'ok' }] }); }
   else if (m.method === 'ui/open-link') { window.links.push(m.params.url); reply(m.id, {}); }
   else if (m.method === 'ui/update-model-context') { window.contexts.push(m.params); reply(m.id, {}); }
   else if (m.id !== undefined) reply(m.id, {});
@@ -53,12 +61,17 @@ window.setContext = patch => { ctx = { ...ctx, ...patch }; frame.contentWindow.p
 window.resize = (w, h, zen) => { frame.style.width = w + 'px'; frame.style.height = h + 'px'; window.setContext({ containerDimensions: { width: w, height: h }, ...(zen ? { zen: { ...ctx.zen, ...zen } } : {}) }); };
 window.zenSend = (method, params) => frame.contentWindow.postMessage({ jsonrpc: '2.0', method, params }, '*');
 window.sendResult = structuredContent => frame.contentWindow.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: { content: [{ type: 'text', text: 'opened' }], structuredContent } }, '*');
-fetch('/ui.html').then(r => r.text()).then(html => { frame.srcdoc = html; });
+fetch(helper ? '/helper.html' : '/ui.html').then(r => r.text()).then(html => { frame.srcdoc = html; });
 </script>`;
+
+const mcp = new Client({ name: 'e2e', version: '0' });
+await mcp.connect(new StdioClientTransport({ command: process.execPath, args: ['mcp/dist/server.js'], cwd: root, env: { PATH: process.env.PATH ?? '' } }));
+const helperHtml = (await mcp.readResource({ uri: 'ui://zensudoku/helper' })).contents[0].text;
 
 const http = createServer((req, res) => {
   const url = new URL(req.url, 'http://x').pathname;
-  if (url === '/host.html') { res.setHeader('content-type', 'text/html'); return res.end(HOST); }
+  if (url === '/host.html' || url === '/helper-host.html') { res.setHeader('content-type', 'text/html'); return res.end(HOST); }
+  if (url === '/helper.html') { res.setHeader('content-type', 'text/html'); return res.end(helperHtml); }
   const file = url === '/ui.html' ? path.join(root, 'ui/dist/index.html') : path.join(dist, url === '/' ? 'index.html' : url);
   if (!file.startsWith(root) || !existsSync(file)) { res.statusCode = 404; return res.end('no'); }
   res.setHeader('content-type', types[path.extname(file)] ?? 'application/octet-stream');
@@ -93,15 +106,30 @@ try {
   assert.equal(await page.locator('.grid button.given').count(), givenCount);
   assert.match(await page.locator('.progress [role=status]').textContent(), new RegExp(`${givenCount} of 81 filled`));
 
+  const clear = page.getByRole('switch', { name: 'Auto-clear notes' });
+  assert.equal(await clear.isChecked(), true);
+  const peer = page.locator('[data-cell="3"]');
+  await peer.click();
+  await peer.press('c');
+  await peer.press('7');
+  await peer.press('m');
+  await peer.press('7');
+  await peer.press('v');
+
   // a digit goes in, undo takes it out, redo puts it back
   const cell = await firstEmpty(page);
   const at = page.locator(`[data-cell="${cell}"]`);
   await at.click();
   await page.keyboard.press('7');
   assert.equal(await at.getAttribute('data-value'), '7');
+  assert.equal(await peer.getAttribute('data-corner'), '');
+  assert.equal(await peer.getAttribute('data-center'), '');
   await page.getByRole('button', { name: 'Undo' }).click();
   assert.equal(await at.getAttribute('data-value'), '');
+  assert.equal(await peer.getAttribute('data-corner'), '7');
+  assert.equal(await peer.getAttribute('data-center'), '7');
   await page.getByRole('button', { name: 'Redo' }).click();
+  assert.equal(await peer.getAttribute('data-center'), '');
   assert.equal(await at.getAttribute('data-value'), '7');
   await page.keyboard.press('Control+z');
   assert.equal(await at.getAttribute('data-value'), '');
@@ -128,8 +156,10 @@ try {
   assert.equal(await at.getAttribute('data-value'), sol);
   assert.equal(await at.getAttribute('data-corner'), '', 'placing a number clears its notes');
 
-  // progress survives a reload
+  await clear.uncheck();
+  // progress and the setting survive a reload
   await page.reload();
+  assert.equal(await clear.isChecked(), false);
   await page.waitForSelector('.grid');
   assert.equal(await page.locator(`[data-cell="${cell}"]`).getAttribute('data-value'), sol);
   assert.equal(await page.locator(`[data-cell="${cell}"]`).getAttribute('data-color'), '5');
@@ -327,10 +357,14 @@ try {
   const keys = () => hostPage.evaluate(() => window.zenmsgs.filter(m => m.method === 'zen/key').map(m => m.params).filter(k => k.key !== 'Control'));
   await hostPage.waitForFunction(() => window.zenmsgs.some(m => m.method === 'zen/commands'));
   const first = await hostPage.evaluate(() => window.zenmsgs.find(m => m.method === 'zen/commands').params.commands);
+  await hostPage.evaluate(() => window.zenSend('zen/command', { id: 'toggle-auto-clear' }));
+  await ui.getByRole('switch', { name: 'Auto-clear notes', checked: false }).waitFor();
+  await hostPage.evaluate(() => window.zenSend('zen/command', { id: 'toggle-auto-clear' }));
+  await ui.getByRole('switch', { name: 'Auto-clear notes', checked: true }).waitFor();
   // one bundled puzzle: nothing to start, so "New game" is not declared; the rest is, with zenbot's key forms
   assert.deepEqual(first.filter(c => c.ring).map(c => c.id), ['restart', 'hint']);
   assert.deepEqual(first.map(c => [c.id, c.key]).filter(([, k]) => k), [['hint', 'h'], ['library', 'l']]);
-  assert.deepEqual(first.map(c => c.id), ['restart', 'hint', 'toggle-notes', 'library']);
+  assert.deepEqual(first.map(c => c.id), ['restart', 'hint', 'toggle-notes', 'toggle-auto-clear', 'library']);
   // the entered puzzle makes another one available: New game (n) joins, first in the ring
   const latest = await hostPage.evaluate(() => window.zenmsgs.filter(m => m.method === 'zen/commands').at(-1).params.commands);
   assert.deepEqual(latest.slice(0, 2).map(c => [c.id, c.key, c.ring]), [['new-game', 'n', true], ['restart', undefined, true]]);
@@ -422,9 +456,67 @@ try {
   await ui.getByRole('button', { name: 'Hint' }).click();
   assert.match(await ui.getByTestId('hint').textContent(), /aren't available for this variant/);
 
+  // Board and helper in separate sandboxed frames, connected to the same real MCP process.
+  const cageSource = TINY.replace("ca:[", "ca:[{ce:[[0,2],[0,3]],v:5},");
+  const openedCage = await mcp.callTool({ name: 'zensudoku_new', arguments: { puzzle: cageSource } });
+  assert.ok(!openedCage.isError);
+  const live = page => page.exposeFunction('liveTools', params => mcp.callTool(params));
+  const boardPage = await browser.newPage({ viewport: { width: 390, height: 850 }, hasTouch: true });
+  watch(boardPage);
+  await live(boardPage);
+  // Mount the board before enabling live calls so its initial example report cannot replace the fixture.
+  await boardPage.addInitScript(() => { window.ignoreReports = true; });
+  await boardPage.goto(base + '/host.html');
+  await boardPage.waitForFunction(() => window.ready);
+  await boardPage.evaluate(id => {
+    window.resize(390, 840, { phone: true });
+    window.sendResult({ puzzleId: id });
+  }, openedCage.structuredContent.puzzleId);
+  const liveBoard = boardPage.frameLocator('#f');
+  await liveBoard.locator('.grid.pad').waitFor();
+  const helperPage = await browser.newPage({ viewport: { width: 360, height: 850 } });
+  watch(helperPage);
+  await live(helperPage);
+  await helperPage.goto(base + '/helper-host.html');
+  const panel = helperPage.frameLocator('#f');
+  await panel.getByRole('heading', { name: 'Tiny', exact: true }).waitFor();
+  assert.equal(await panel.getByText('Normal sudoku rules apply.').count(), 1);
+  await boardPage.evaluate(() => { window.ignoreReports = false; });
+  await liveBoard.locator('[data-cell="2"]').tap();
+  const selected = panel.getByTestId('selected-cage');
+  await selected.getByText('R1C3 · 5 in 2 cells').waitFor();
+  await liveBoard.getByRole('button', { name: 'Place 3' }).tap();
+  await selected.locator('s').waitFor();
+  assert.equal(await selected.locator('s').textContent(), '1 + 4');
+  assert.match(await selected.textContent(), /2 \+ 3/);
+  const killer = panel.getByRole('list', { name: 'Killer combinations' });
+  await panel.getByLabel('Cage sum').fill('5');
+  await panel.getByLabel('Cell count').fill('2');
+  await panel.getByLabel('Must include').fill('3');
+  assert.equal((await killer.textContent()).trim(), '2 + 3');
+  await panel.getByLabel('Must exclude').fill('2');
+  assert.match(await killer.textContent(), /No combinations/);
+  await panel.getByLabel('Must exclude').fill('');
+  await panel.getByText('Empty', { exact: true }).waitFor();
+  await panel.getByLabel('Sandwich sum').fill('5');
+  await panel.getByRole('heading', { name: '2 digits', exact: true }).waitFor();
+  assert.equal(await panel.locator('html').evaluate(el => el.scrollWidth <= el.clientWidth), true);
+  await panel.locator('html[data-theme="dark"]').waitFor();
+  await shot(helperPage, 'helper-360-dark');
+  await helperPage.evaluate(() => window.setContext({ theme: 'light' }));
+  await panel.locator('html[data-theme="light"]').waitFor();
+  await shot(helperPage, 'helper-360-light');
+
+  await liveBoard.locator('[data-cell="2"]').press('ArrowLeft');
+  await selected.getByText(/R1C2 is not in a numbered cage/).waitFor();
+  await mcp.callTool({ name: 'zensudoku_new', arguments: {} });
+  await boardPage.evaluate(() => window.sendResult({ puzzleId: 'example-classic' }));
+  await panel.getByRole('heading', { name: 'Example — classic', exact: true }).waitFor();
+
   assert.deepEqual(errors.filter(e => !/localStorage|Failed to read the 'localStorage'|SecurityError|sandbox/i.test(e)), [], 'no page errors');
-  console.log('e2e ok: PWA (play, undo, notes, reload, hint, enter, SudokuPad import, offline, solve) and MCP App (handshake, result, report, zen keys and commands, library)');
+  console.log('e2e ok: PWA (play, undo, notes, reload, hint, enter, SudokuPad import, offline, solve) and MCP App (handshake, result, report, zen keys and commands, library, live helper)');
 } finally {
   await browser.close();
   http.close();
+  await mcp.close();
 }

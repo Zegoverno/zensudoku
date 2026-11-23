@@ -148,7 +148,11 @@ export interface PadRect {
   text: PadText | null;
 }
 export interface PadPath { points: [number, number][]; color: string; width: number; opacity: number; dash: string; fill: string; cap: 'round' | 'butt'; join: 'round' | 'miter' }
-export interface PadCage { cells: [number, number][]; segments: Seg[]; color: string; width: number; dash: string; fill: string; label: PadText | null }
+export interface PadCage {
+  cells: [number, number][]; segments: Seg[]; color: string; width: number; dash: string; fill: string; label: PadText | null;
+  /** A killer cage's numeric total (its label is a whole number); null for any other cage. */
+  sum: number | null;
+}
 export interface PadModel {
   rows: number; cols: number;
   /** Digits 1..digits are played. */
@@ -395,6 +399,7 @@ export function buildModel(p: Record<string, unknown>): PadModel | string {
       cells, segments: outline(cells, d),
       color: color(cage.borderColor ?? cage.outlineC, '#000000'), width: (box ? 3 : 1.5) * PX, dash: box || fill !== 'none' ? '' : `${5 * PX} ${3 * PX}`,
       fill, label: value.trim() && !META.test(value) ? { x: lc + .035, y: lr + .15 + .012, text: value, size: 13 * PX, fill: color(cage.textColor ?? cage.fontC, '#000000'), stroke: 'none', strokeWidth: 0, anchor: 'start', angle: 0, background: 'paper' } : null,
+      sum: style === 'killer' && /^\s*\d{1,3}\s*$/.test(value) ? Number(value) : null,
     });
   }
   // Like SudokuPad, only the played area is the grid: region borders are clipped to it (a region of an

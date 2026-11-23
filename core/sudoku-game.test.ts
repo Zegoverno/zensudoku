@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { CATALOG } from './sudoku.ts';
+import type { Puzzle } from './sudoku.ts';
 import { seedId as legacyId, seedPuzzle as legacyPuzzle, transformed as puzzle } from './__tests__/fixtures.ts';
-import { MAX_HISTORY, STORAGE_KEY, blankBoard, boardOf, choose, enter, erase, isDone, load, newGame, next, notesOf, peekBoard, place, puzzleOf, redo, reset, restore, select, serialize, setColor, setFilters, toggleNote, undo } from './sudoku-game.ts';
+import { MAX_HISTORY, STORAGE_KEY, seenBy, setAutoClear, blankBoard, boardOf, choose, enter, erase, isDone, load, newGame, next, notesOf, peekBoard, place, puzzleOf, redo, reset, restore, select, serialize, setColor, setFilters, toggleNote, undo } from './sudoku-game.ts';
 import type { Game } from './sudoku-game.ts';
 
 /** A game on an entered puzzle (a transformed copy of the example), so the catalog may grow freely. */
@@ -98,6 +99,77 @@ describe('values and notes', () => {
     at(g, i);
     expect(undo(g)).toBe(true);
     expect(isDone(g)).toBe(false);
+  });
+});
+
+describe('clearing notes automatically', () => {
+  /** Empty cells of the board that see `i` and empty cells that do not. */
+  const split = (g: Game, i: number) => {
+    const seen = new Set(seenBy(puzzleOf(g), i)), empty = boardOf(g).cells.flatMap((n, j) => (n || j === i ? [] : [j]));
+    return { peers: empty.filter(j => seen.has(j)), others: empty.filter(j => !seen.has(j)) };
+  };
+  const note = (g: Game, j: number, kind: 'corner' | 'center', n: number) => { at(g, j); toggleNote(g, kind, n); };
+  it('is on by default, and placing a digit takes it out of the corner and center notes of every cell that sees it', () => {
+    const g = fresh(), i = emptyCell(g), { peers, others } = split(g, i);
+    expect(g.autoClear).toBe(true);
+    const [a, b] = peers, [far] = others;
+    note(g, a, 'corner', 5); note(g, a, 'corner', 2); note(g, b, 'center', 5); note(g, far, 'center', 5);
+    at(g, i);
+    expect(place(g, 5)).toBe(true);
+    const bd = boardOf(g);
+    expect(notesOf(bd.corner[a])).toEqual([2]);                   // only that digit goes
+    expect(bd.center[b]).toBe(0);
+    expect(notesOf(bd.center[far])).toEqual([5]);                 // a cell that does not see it keeps it
+  });
+  it('is one undo step with the placement, and redo applies both again', () => {
+    const g = fresh(), i = emptyCell(g), { peers } = split(g, i), [a, b] = peers;
+    note(g, a, 'corner', 4); note(g, b, 'center', 4); note(g, b, 'center', 7);
+    at(g, i);
+    place(g, 4);
+    expect(undo(g)).toBe(true);
+    const bd = boardOf(g);
+    expect(bd.cells[i]).toBe(0);
+    expect(notesOf(bd.corner[a])).toEqual([4]);
+    expect(notesOf(bd.center[b])).toEqual([4, 7]);
+    expect(bd.selected).toBe(i);
+    expect(redo(g)).toBe(true);
+    expect(bd.cells[i]).toBe(4);
+    expect(bd.corner[a]).toBe(0);
+    expect(notesOf(bd.center[b])).toEqual([7]);
+    expect(bd.selected).toBe(i);
+    expect(undo(g)).toBe(true);                                   // and the notes before were their own steps
+    expect(undo(g)).toBe(true);
+    expect(notesOf(bd.center[b])).toEqual([4]);
+  });
+  it('can be switched off, and the switch is saved (an old save means on)', () => {
+    const g = fresh(), i = emptyCell(g), { peers: [a] } = split(g, i);
+    setAutoClear(g, false);
+    note(g, a, 'corner', 3);
+    at(g, i); place(g, 3);
+    expect(notesOf(boardOf(g).corner[a])).toEqual([3]);
+    expect(restore(serialize(g))!.autoClear).toBe(false);
+    setAutoClear(g, true);
+    expect(restore(serialize(g))!.autoClear).toBe(true);
+    const old = JSON.parse(serialize(g)); delete old.autoClear;
+    expect(restore(JSON.stringify(old))!.autoClear).toBe(true);
+  });
+  it('erasing, notes and colors never clear other cells', () => {
+    const g = fresh(), i = emptyCell(g), { peers: [a] } = split(g, i);
+    note(g, a, 'corner', 6);
+    at(g, i); g.mode = 'center'; enter(g, 6); g.mode = 'value'; setColor(g, 2); place(g, 1); erase(g);
+    expect(notesOf(boardOf(g).corner[a])).toEqual([6]);
+  });
+  it('sees by the basic rules only: rows, columns, boxes, regions and diagonals, never cages', () => {
+    const base = puzzleOf(fresh());
+    const classic = seenBy(base, 0);
+    expect(classic).toHaveLength(20);
+    expect(classic).toEqual(expect.arrayContaining([1, 8, 9, 72, 10, 20]));
+    expect(classic).not.toContain(40);
+    const diagonal = seenBy({ ...base, variant: 'diagonal' } as Puzzle, 0);
+    expect(diagonal).toContain(40);
+    expect(diagonal).toContain(80);
+    const killer = seenBy({ ...base, variant: 'killer', cages: [{ sum: 10, cells: [0, 40] }] } as Puzzle, 0);
+    expect(killer).not.toContain(40);
   });
 });
 

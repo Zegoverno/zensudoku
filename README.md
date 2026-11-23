@@ -5,7 +5,7 @@ marking. It also plays [SudokuPad](https://sudokupad.app) puzzles, drawn the way
 them, from a source you import or from a local library of your own. One code base, three ways to run it:
 
 - a **PWA**: static files, installable on desktop and Android, works offline;
-- a **[zenbot](https://github.com/Zegoverno/zenbot) plugin**: an entry in the Games tab, a `/sudoku` command, and a coaching skill;
+- a **[zenbot](https://github.com/Zegoverno/zenbot) plugin**: an entry in the Games tab, a Sudoku helper side view, a `/sudoku` command, and a coaching skill;
 - an **MCP App**: the board as an inline widget in any host that supports
   [MCP Apps](https://modelcontextprotocol.io) (Claude, ChatGPT and others), with tools the agent can call.
 
@@ -28,7 +28,11 @@ Click or tap a cell, then the pad, or use the keyboard:
 | Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y | undo, redo |
 | l | the Library (standalone; inside zenbot it is the Library command) |
 
-Placing a digit clears that cell's notes. Givens are protected. A repeated digit, or a broken
+Placing a digit clears that cell's notes. With **Auto-clear notes** on (the default),
+it also removes that digit from corner and center notes in the same row, column or region.
+Undo and redo include the placement and all its changes in one step. The switch is
+saved on this device; in zenbot it is also available as **Toggle auto-clear notes**.
+Givens are protected. A repeated digit, or a broken
 variant rule, marks the cells and says why. A finished board is locked. **Hint** points at one
 cell (a naked or hidden single) and explains it; it never places the digit.
 
@@ -188,3 +192,18 @@ The only bundled puzzle comes from `scripts/generate-example.ts`: a seeded rando
 removed while the solution stays unique. No puzzle in this repository comes from a book, a site or
 another collection. SudokuPad puzzles you import or keep in the local library stay on your device; the tests use
 small puzzles written for them.
+
+## Sudoku helper
+
+In zenbot, open **Sudoku helper** in the side panel alongside the game. It shows the
+current puzzle's rules and updates as you select cells with the keyboard or by tapping.
+In the PWA and other MCP hosts, the calculators are under **Sudoku helper** on the board;
+the puzzle rules are shown above the grid.
+
+- **Selected cage:** a numbered cage shows every distinct-digit set for its sum and size.
+  Sets that cannot contain the digits already entered in the cage are greyed out and crossed
+  out. The helper does not test those sets against other grid constraints.
+- **Killer calculator:** enter the sum and cell count; optionally type digits to include or
+  exclude. Combinations are unordered sets, not placements.
+- **Sandwich calculator:** enter a sum to see sets grouped by length, from digits 2–8
+  on a 9×9 grid (2 through N−1 on smaller grids). A sum of 0 means an empty sandwich.
