@@ -32,7 +32,7 @@ import type { LibraryInfo } from '../core/sudoku.ts';
 import { commandId, commandList, focused, keyPayload } from './zen-keys.ts';
 import type { Avail } from './zen-keys.ts';
 
-const app = new App({ name: 'zensudoku', version: '0.5.0' });
+const app = new App({ name: 'zensudoku', version: '0.5.1' });
 const target = document.getElementById('app')!;
 const helper = target.dataset.view === 'helper';
 

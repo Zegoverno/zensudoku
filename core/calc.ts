@@ -56,7 +56,10 @@ export function sumCages(p: Puzzle): SumCage[] {
   if (!p.pad) return p.cages.map(c => ({ sum: c.sum, cells: [...c.cells].sort((a, b) => a - b) }));
   const pad = p.pad, active = new Set(pad.active), out: SumCage[] = [];
   for (const c of pad.cages) {
-    if (c.sum == null) continue;
+    // Validate both axes before flattening: an invalid column can wrap to a played cell.
+    if (c.sum == null || c.cells.some(([r, col]) =>
+      !Number.isInteger(r) || r < 0 || r >= pad.rows ||
+      !Number.isInteger(col) || col < 0 || col >= pad.cols)) continue;
     const cells = c.cells.map(([r, col]) => r * pad.cols + col);
     if (!cells.length || cells.some(i => !active.has(i))) continue;
     out.push({ sum: c.sum, cells: [...new Set(cells)].sort((a, b) => a - b) });

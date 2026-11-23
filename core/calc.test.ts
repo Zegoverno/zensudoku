@@ -85,6 +85,17 @@ describe('cages of a puzzle', () => {
     expect(cageOf(p, 1)?.sum).toBe(3);
     expect(cageOf(p, 10)).toBeNull();
   });
+  it('rejects a whole SudokuPad cage if any coordinate is invalid, even if it aliases a played cell', () => {
+    const src = "{ce:[[,,,],[,,,],[,,,],[,,,]],ca:[{ce:[[3,3],[0,0]],v:3},{ce:[[0,1],[0,4]],v:4},{ce:[[1,-1]],v:5},{ce:[[-1,4]],v:6},{ce:[[4,-1]],v:7}]}";
+    const p = padPuzzle('scl' + lz.compressToBase64(src));
+    if (typeof p === 'string') throw new Error(p);
+    if (!p.pad) throw new Error('Expected a SudokuPad model');
+    // The decoder drops fractional cells, so exercise the calculator's integer guard directly.
+    const cage = p.pad.cages[0];
+    p.pad.cages.push({ ...cage, cells: [[0.25, 0]] }, { ...cage, cells: [[0, 0.5], [0.125, 0.5]] });
+    expect(sumCages(p)).toEqual([{ sum: 3, cells: [0, 15] }]);
+    expect(cageOf(p, 4)).toBeNull();
+  });
 });
 
 describe('helpers', () => {
