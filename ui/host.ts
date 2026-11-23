@@ -30,7 +30,7 @@ import type { LibraryInfo } from '../core/sudoku.ts';
 import { commandId, commandList, focused, keyPayload } from './zen-keys.ts';
 import type { Avail } from './zen-keys.ts';
 
-const app = new App({ name: 'zensudoku', version: '0.4.0' });
+const app = new App({ name: 'zensudoku', version: '0.4.1' });
 const store = createStore(browserStorage());
 
 /** Follows the host's theme, CSS variables and size, and records where zenbot shows us. */

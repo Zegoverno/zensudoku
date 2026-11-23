@@ -22,6 +22,10 @@ const catalog = JSON.parse(readFileSync(path.join(root, 'core/catalog.json'), 'u
 const BOXES4 = '[[[0,0],[0,1],[1,0],[1,1]],[[0,2],[0,3],[1,2],[1,3]],[[2,0],[2,1],[3,0],[3,1]],[[2,2],[2,3],[3,2],[3,3]]]';
 const TINY = `{ce:[[{v:1},{v:2},,],[,,,{v:2}],[{v:2},,{v:4},],[,,,{v:1}]],re:${BOXES4},ca:[{v:'title: Tiny'},{v:'author: A. Setter'},{v:'rules: Normal sudoku rules apply.'}],vd:[{id:'abcDEF12345',t:'Video'}]}`;
 const TINY_SCL = 'scl' + LZ.compressToBase64(TINY);
+// The same 4×4 in a 6×6 array under two rows and beside two columns of clues (a clue, a long text, one outside region).
+const OUT_L = Array.from({ length: 36 }, (_, i) => [Math.floor(i / 6), i % 6]).filter(([r, c]) => r < 2 || c < 2).map(rc => `[${rc}]`);
+const OUT_BOXES = [[2, 2], [2, 4], [4, 2], [4, 4]].map(([r, c]) => `[[${r},${c}],[${r},${c + 1}],[${r + 1},${c}],[${r + 1},${c + 1}]]`);
+const OUT_SCL = 'scl' + LZ.compressToBase64(`{ce:[[,,,{v:7},,],[,,,,,],[,,{v:1},{v:2},,],[,,,,,{v:2}],[,,{v:2},,{v:4},],[,,,,,{v:1}]],re:[[${OUT_L}],${OUT_BOXES}],o:[{ct:[0.5,0.5],w:1,h:1,c1:#0,fs:12,te:'Ath + Bth'}]}`);
 const LINE_SCL = 'scl' + LZ.compressToBase64(TINY.replace('re:', 'l:[{wp:[[0.5,0.5],[1.5,1.5]],c:CFCFCF,th:10}],re:'));
 const shots = process.env.SHOTS;
 if (shots) mkdirSync(shots, { recursive: true });
@@ -182,6 +186,18 @@ try {
   assert.match(await page.getByTestId('status').textContent(), /3 repeats in row 1/);
   await page.keyboard.press('Delete');
   await shot(page, 'pwa-sudokupad');
+  // clue rows and columns outside the regions are not the grid: no cell to select, no lines or borders there
+  await padBox.fill(OUT_SCL);
+  await page.getByRole('button', { name: 'Import' }).click();
+  await page.getByTestId('pad-drawing').waitFor();
+  assert.equal(await page.locator('.grid.pad [data-cell]').count(), 16, 'only the 4×4 can be played');
+  assert.match(await page.locator('.paddraw .gridlines').getAttribute('d'), /^M2 2H6/, 'grid lines start at the grid');
+  const edges = await page.locator('.paddraw .regions').getAttribute('d');
+  assert.ok(edges.match(/[\d.]+/g).every(n => Number(n) >= 2), 'no region border outside the grid: ' + edges);
+  await shot(page, 'pwa-sudokupad-outside');
+  await padBox.fill(TINY_SCL);
+  await page.getByRole('button', { name: 'Import' }).click();
+  await page.getByTestId('pad-drawing').waitFor();
   // it survives a reload, and the Library (l) lists it as imported
   await page.reload();
   await page.getByTestId('pad-drawing').waitFor();

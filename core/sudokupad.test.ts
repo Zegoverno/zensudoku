@@ -77,6 +77,31 @@ describe('the model', () => {
     expect(m.cages).toEqual([]);
     expect(m.regionEdges.length).toBeGreaterThan(0);
   });
+  it('only the cells of the regions are the grid: an outside-clue area has no lines, borders or play', () => {
+    // The 4×4 of TINY at rows 2–5, columns 2–5 of a 6×6 `ce`, under two rows and beside two columns of clues:
+    // a clue given, a long text, and a boxed outside cell, all in the L-shaped area that a region also covers.
+    const boxes = [[2, 2], [2, 4], [4, 2], [4, 4]].map(([r, c]) => `[[${r},${c}],[${r},${c + 1}],[${r + 1},${c}],[${r + 1},${c + 1}]]`);
+    const L = Array.from({ length: 36 }, (_, i) => [Math.floor(i / 6), i % 6]).filter(([r, c]) => r < 2 || c < 2).map(rc => `[${rc}]`);
+    const row = (r: number) => `[${Array.from({ length: 6 }, (_, c) => (r === 0 && c === 3 ? '{v:7}' : r === 2 && c === 2 ? '{v:1}' : '')).join(',')}]`;
+    const m = model(scl(`{ce:[${Array.from({ length: 6 }, (_, r) => row(r)).join(',')}],re:[[${L}],${boxes}],` +
+      `o:[{ct:[0.5,0.5],w:1,h:1,c1:#0,fs:12,te:'Ath + Bth'},{ct:[2.5,2.5],w:1,h:1,c1:#0}]}`));
+    expect([m.rows, m.cols, m.digits, m.active.length, m.origin]).toEqual([6, 6, 4, 16, [2, 2]]);
+    expect(m.grid).toEqual({ x: 2, y: 2, w: 4, h: 4 });
+    // nothing outside the grid is bordered: no region edge, and the clue is text, not a digit
+    expect(m.regionEdges.length).toBeGreaterThan(0);
+    for (const [x1, y1, x2, y2] of m.regionEdges) for (const v of [x1, y1, x2, y2]) expect(v).toBeGreaterThanOrEqual(2);
+    expect(m.givens[2 * 6 + 2]).toBe(1);
+    expect(m.givens[3]).toBe(0);
+    expect(m.outsideGivens.map(t => t.text)).toEqual(['7']);
+    // the boxed outside cell keeps its text but loses its border; the one inside the grid keeps both
+    expect(m.over.map(r => r.stroke)).toEqual(['none', '#000000']);
+    expect(m.over[0].text?.text).toBe('Ath + Bth');
+    // the long text overflows into the margin, and the drawing's extent holds it
+    expect(m.bounds.x).toBeLessThan(0);
+    const p = puzzle(scl(`{ce:[${Array.from({ length: 6 }, (_, r) => row(r)).join(',')}],re:[[${L}],${boxes}]}`));
+    expect(isActive(p, 3)).toBe(false);
+    expect(isActive(p, 2 * 6 + 2)).toBe(true);
+  });
   it('reads a solution: digits, . for an empty cell, ? for any', () => {
     const m = model(scl(TINY.replace("{v:'rules:", `{v:'solution: ${SOLUTION4.join('')}'},{v:'rules:`)));
     expect(m.solution).toEqual(SOLUTION4);
