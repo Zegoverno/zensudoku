@@ -13,24 +13,26 @@
 // - Under zenbot (its `zen` host context) the board also takes part in zenbot's keyboard model (zen-keys.ts):
 //   it declares its commands (zen/commands), forwards the keys it does not use (zen/key), runs zen/command and
 //   focuses the board on zen/focus. Elsewhere none of these notifications is sent.
-// - Progress is saved in the iframe's localStorage when the sandbox allows it, else kept in memory.
+// - Progress is saved in plugin data when available, with iframe localStorage or memory as fallback.
 import { App, applyDocumentTheme, applyHostStyleVariables } from '@modelcontextprotocol/ext-apps';
 import { mount } from 'svelte';
 import { z } from 'zod';
 import './app.css';
 import Sudoku from './Sudoku.svelte';
-import { browserStorage } from './adapters.ts';
+import { browserStorage, sourceStorage } from './adapters.ts';
 import type { LibraryItem, LibrarySource, Snapshot, SourceEntry } from './adapters.ts';
 import { createStore } from './state.svelte.ts';
 import { host, readHost } from './host-state.svelte.ts';
 import { choose } from '../core/sudoku-game.ts';
 import { renderGrid, conflictList } from '../core/text.ts';
-import { LIBRARY_PREFIX, findPuzzle, padPuzzle } from '../core/sudoku.ts';
+import { LIBRARY_PREFIX, PAD_PREFIX, findPuzzle, padPuzzle } from '../core/sudoku.ts';
 import type { LibraryInfo } from '../core/sudoku.ts';
 import { commandId, commandList, focused, keyPayload } from './zen-keys.ts';
 import type { Avail } from './zen-keys.ts';
 
-const app = new App({ name: 'zensudoku', version: '0.5.1' });
+import { version } from '../plugin.json';
+
+const app = new App({ name: 'zensudoku', version });
 const target = document.getElementById('app')!;
 
 /** Follows the host's theme, CSS variables and size, and records where zenbot shows us. */
@@ -50,8 +52,50 @@ function applyContext(ctx: ReturnType<App['getHostContext']>) {
 const zen = (method: string, params: unknown) => (app as unknown as { notification(n: { method: string; params: unknown }): Promise<void> }).notification({ method, params }).catch(() => {});
 const notification = (method: string) => z.object({ method: z.literal(method), params: z.unknown().optional() });
 
-function mountBoard() {
-  const store = createStore(browserStorage());
+type Structured = Record<string, unknown> | undefined;
+const resume = (args: Record<string, unknown>) => app.callServerTool(
+  { name: 'zensudoku_resume', arguments: args }, { timeout: 2500 },
+).then(r => r.isError ? undefined : r.structuredContent as Structured, () => undefined);
+
+// Listen before connecting: a host may deliver an explicit puzzle while the save is loading.
+let requested: string | undefined;
+let openRequested: ((id: string) => Promise<void>) | undefined;
+app.ontoolresult = async result => {
+  const id = result.structuredContent?.puzzleId;
+  if (typeof id !== 'string') return;
+  if (openRequested) await openRequested(id);
+  else requested = id;
+};
+
+async function mountBoard() {
+  const stored = await resume({});
+  const storage = browserStorage(), sources = sourceStorage();
+  const storedGame = typeof stored?.game === 'string' ? stored.game : null;
+  const hydrated = new Map<string, SourceEntry>();
+  if (storedGame && Array.isArray(stored?.sources)) {
+    for (const e of stored.sources) {
+      if (typeof e?.id === 'string' && typeof e.source === 'string') hydrated.set(e.id, e);
+    }
+  }
+  const writer = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('');
+  let revision = 0;
+  const store = createStore({
+    read: () => storedGame ?? storage.read(),
+    write(game) {
+      storage.write(game);
+      // Never overwrite a server save from a frame whose startup read timed out.
+      if (stored?.available !== true) return;
+      const { puzzleId, boards } = JSON.parse(game);
+      const entries = [...new Set([puzzleId, ...Object.keys(boards)])].filter(id => id.startsWith(PAD_PREFIX))
+        .map(id => store.sources.get(id)).filter((e): e is SourceEntry => !!e).slice(0, 200)
+        .map(({ id, source }) => ({ id, source }));
+      void resume({ save: { game, sources: entries, writer, revision: ++revision } });
+    },
+  }, {
+    get: id => hydrated.get(id) ?? (storedGame && id.startsWith(LIBRARY_PREFIX) ? undefined : sources.get(id)),
+    all: () => [...new Map([...sources.all().map(e => [e.id, e] as const), ...hydrated]).values()],
+    add: e => { hydrated.set(e.id, e); sources.add(e); },
+  });
   let last = '', lastModel = '', timer: ReturnType<typeof setTimeout> | undefined;
   function report(s: Snapshot) {
     const modelKey = `${s.puzzleId}|${s.cells}`;
@@ -72,7 +116,6 @@ function mountBoard() {
     }, 400);
   }
 
-  type Structured = Record<string, unknown> | undefined;
   /** A SudokuPad puzzle's source from the server, registered and kept; a string says why not. */
   async function fetchSource(puzzleId: string): Promise<SourceEntry | string> {
     const r = await app.callServerTool({ name: 'zensudoku_puzzle', arguments: { puzzleId } }).catch(() => null);
@@ -81,6 +124,7 @@ function mountBoard() {
     const entry: SourceEntry = { id: sc.puzzleId, source: sc.source, library: (sc.library as LibraryInfo | null) ?? undefined };
     const p = padPuzzle(entry.source, entry.library);
     if (typeof p === 'string') return p;
+    if (entry.id !== puzzleId || p.id !== puzzleId) return 'The puzzle could not be fetched.';
     store.sources.add(entry);
     return entry;
   }
@@ -95,12 +139,13 @@ function mountBoard() {
     source: item => fetchSource(item.puzzleId),
   };
 
-  app.ontoolresult = async result => {
-    const sc = result.structuredContent as { puzzleId?: unknown } | undefined;
-    if (typeof sc?.puzzleId !== 'string') return;
-    if (!findPuzzle(sc.puzzleId) && typeof await fetchSource(sc.puzzleId) === 'string') return;
-    if (choose(store.game, sc.puzzleId)) store.save();
+  let request = 0;
+  openRequested = async id => {
+    const mine = ++request;
+    if (!findPuzzle(id) && typeof await fetchSource(id) === 'string') return;
+    if (mine === request && choose(store.game, id)) store.save();
   };
+  if (requested !== undefined) void openRequested(requested);
   app.onhostcontextchanged = () => { applyContext(app.getHostContext()); sendCommands(); };
 
   // ---- zenbot's keyboard model (only when the host is zenbot) ----
@@ -125,8 +170,8 @@ function mountBoard() {
       onkey: (e: KeyboardEvent, typing: boolean) => { void zen('zen/key', keyPayload(e, typing)); },
     },
   });
-  return () => { connected = true; sendCommands(); };
+  connected = true;
+  sendCommands();
 }
 
-const connected = mountBoard();
-app.connect().then(() => { applyContext(app.getHostContext()); connected(); });
+app.connect().then(() => { applyContext(app.getHostContext()); return mountBoard(); });

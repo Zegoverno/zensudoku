@@ -1,4 +1,4 @@
-// The Sudoku MCP server: six tools for an agent, two for the app, and one HTML resource: the board
+// The Sudoku MCP server: six tools for an agent, three for the app, and one HTML resource: the board
 // (ui://zensudoku/app).
 //
 //   zensudoku_new      open the example, a classic puzzle or a SudokuPad source; shows the board UI
@@ -8,6 +8,7 @@
 //   zensudoku_check    conflicts, whether it is solved, how many entries are wrong
 //   zensudoku_hint     one next logical step (a naked or hidden single), explained; never the solution
 //   zensudoku_report   the UI tells the server its board (visible to the app only)
+//   zensudoku_resume   load or save the board and imported sources (visible to the app only)
 //   zensudoku_puzzle   the UI asks for a SudokuPad puzzle's source by id (visible to the app only)
 //
 // The UI keeps the server and the chat in sync (host.ts), so state/check/hint see what the player sees.
@@ -23,6 +24,8 @@ import { conflictList, renderGrid } from '../core/text.ts';
 import { findPuzzle, open, openLibrary, report, sourceOf, start, text } from './session.ts';
 import type { Session } from './session.ts';
 import { readLibrary } from './library.ts';
+import { loadResume, resumeInput, saveResume } from './resume.ts';
+import { version } from '../plugin.json';
 
 export const UI_URI = 'ui://zensudoku/app';
 const reply = (message: string, structured: Record<string, unknown>) => ({ content: [{ type: 'text' as const, text: message }], structuredContent: structured });
@@ -48,7 +51,7 @@ const rulesText = (d: ReturnType<typeof describe>) => d.rules ? `\nBy ${d.author
 
 /** `loadHtml` returns the built UI; the default reads ui/dist/index.html next to this server's build. */
 export function createServer(loadHtml: () => string = defaultHtml): McpServer {
-  const server = new McpServer({ name: 'zensudoku', version: '0.6.1' });
+  const server = new McpServer({ name: 'zensudoku', version });
 
   registerAppResource(server, 'Sudoku board', UI_URI, {
     description: 'The Sudoku board: notes, colors, undo, hints.',
@@ -153,6 +156,16 @@ export function createServer(loadHtml: () => string = defaultHtml): McpServer {
     if (!p || !source) return fail('Unknown puzzle.');
     return reply('ok', { puzzleId: p.id, source, library: p.library ?? null });
   });
+
+  registerAppTool(server, 'zensudoku_resume', {
+    title: 'Resume Sudoku',
+    description: 'For the app only: load or save the local Sudoku game.',
+    inputSchema: resumeInput,
+    annotations: { readOnlyHint: false, openWorldHint: false },
+    _meta: { ui: { resourceUri: UI_URI, visibility: ['app'] } },
+  }, async ({ save }) => save
+    ? reply('ok', { saved: saveResume(save) })
+    : reply('ok', loadResume()));
 
   return server;
 }

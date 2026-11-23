@@ -10,8 +10,7 @@ them, from a source you import or from a local library of your own. One code bas
   [MCP Apps](https://modelcontextprotocol.io) (Claude, ChatGPT and others), with tools the agent can call.
 
 MIT licensed. No account, no score, no network, no telemetry: progress stays on your device.
-The plugin asks zenbot for no permissions (`kernel: []`): it reads only its own data folder (the local
-library, below) and writes no files.
+The plugin asks zenbot for no permissions (`kernel: []`): it reads its own data folder (the local library, below) and writes the resume snapshot there.
 
 ## Play
 
@@ -107,6 +106,14 @@ build: `zen plugins add ./zensudoku-<version>.tgz` (see Releasing).
 zenbot reads `plugin.json`: a game (*Sudoku*, in the **Games** tab), a `/sudoku` command that calls
 `zensudoku_new` (in the web chat, in Matrix and from the `zen` CLI), a coaching skill, and no
 permissions.
+
+Sudoku reopens the last puzzle with its digits, notes, colors and selection. The standalone PWA uses
+browser storage on this device; the zenbot game uses `$ZEN_PLUGIN_DATA/resume-v1.json` because its
+sandboxed iframe has no browser storage. That save belongs to the plugin installation (not to a
+browser tab or conversation), works without Internet, and is shared by browsers using that installation.
+Other hosts use browser storage when allowed, otherwise only memory. Explicit puzzle opens take priority.
+Library puzzles are re-read from the local library, so missing or invalid entries fall back to another
+saved puzzle or the example. Imports stay in the local save; neither save nor library is packaged.
 
 The board follows zenbot's host (MCP Apps host context), live:
 

@@ -14,6 +14,14 @@ export interface Session { puzzle: Puzzle; cells: number[]; selected: number; so
 let current: Session | null = null;
 const sources = new Map<string, string>();
 
+/** Re-register a previously opened import after the plugin process restarts. */
+export function rememberImport(id: string, source: string): boolean {
+  const p = padPuzzle(source);
+  if (typeof p === 'string' || p.id !== id) return false;
+  sources.set(id, source);
+  return true;
+}
+
 /** The library entry's puzzle, or why it cannot be opened. */
 export function libraryPuzzle(entry: LibraryEntry): Puzzle | string {
   const { id, collection, number, title, author, video, difficulty, variants, tags } = entry;

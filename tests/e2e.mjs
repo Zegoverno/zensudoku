@@ -8,9 +8,10 @@
 //   3. SudokuPad puzzles (hand-made here): imported in the PWA, and opened from the library in the MCP App.
 // `node tests/e2e.mjs`   (`SHOTS=/some/dir node tests/e2e.mjs` also writes screenshots there)
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { chromium } from 'playwright';
 import LZ from 'lz-string';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -50,7 +51,7 @@ const VARS = ${JSON.stringify(VARS)};
 let ctx = { theme: 'dark', displayMode: 'inline', styles: { variables: VARS }, containerDimensions: { width: 560, height: 1100 }, zen: { pane: 'board', phone: false, slot: 'game', headingFont: 'Georgia, serif' } };
 if (location.search === '?native-theme') ctx.styles = undefined;
 window.calls = []; window.contexts = []; window.zenmsgs = []; window.links = []; window.ready = false; window.toolReply = null;
-const frame = document.getElementById('f');
+let frame = document.getElementById('f');
 const reply = (id, result) => frame.contentWindow.postMessage({ jsonrpc: '2.0', id, result }, '*');
 addEventListener('message', e => {
   if (e.source !== frame.contentWindow) return;
@@ -67,7 +68,16 @@ window.setContext = patch => { ctx = { ...ctx, ...patch }; frame.contentWindow.p
 window.resize = (w, h, zen) => { frame.style.width = w + 'px'; frame.style.height = h + 'px'; window.setContext({ containerDimensions: { width: w, height: h }, ...(zen ? { zen: { ...ctx.zen, ...zen } } : {}) }); };
 window.zenSend = (method, params) => frame.contentWindow.postMessage({ jsonrpc: '2.0', method, params }, '*');
 window.sendResult = structuredContent => frame.contentWindow.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: { content: [{ type: 'text', text: 'opened' }], structuredContent } }, '*');
-fetch('/ui.html').then(r => r.text()).then(html => { frame.srcdoc = html; });
+const html = fetch('/ui.html').then(r => r.text());
+window.remount = async () => {
+  const next = frame.cloneNode();
+  next.removeAttribute('srcdoc');
+  frame.replaceWith(next);
+  frame = next;
+  window.ready = false;
+  frame.srcdoc = await html;
+};
+html.then(text => { frame.srcdoc = text; });
 </script>`;
 
 const mcp = new Client({ name: 'e2e', version: '0' });
@@ -233,10 +243,22 @@ try {
   await padBox.fill(TINY_SCL);
   await page.getByRole('button', { name: 'Import' }).click();
   await page.getByTestId('pad-drawing').waitFor();
-  // it survives a reload, and the Library (l) lists it as imported
+  const importedNote = page.locator('[data-cell="3"]');
+  await importedNote.click();
+  await importedNote.press('c');
+  await importedNote.press('4');
+  await page.getByRole('button', { name: 'Color Blue' }).click();
+  // The exact import and its progress survive with no network, and the picker lists it.
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.waitForFunction(() => navigator.serviceWorker.controller);
+  await context.setOffline(true);
   await page.reload();
+  await context.setOffline(false);
   await page.getByTestId('pad-drawing').waitFor();
   assert.equal(await page.locator('[data-cell="2"]').getAttribute('data-value'), '3');
+  assert.equal(await importedNote.getAttribute('data-corner'), '4');
+  assert.equal(await importedNote.getAttribute('data-color'), '5');
+  assert.equal(await importedNote.getAttribute('class').then(c => c.includes('selected')), true);
   await page.locator('[data-cell="2"]').click();
   await page.keyboard.press('l');
   await page.getByRole('dialog', { name: 'Puzzle picker' }).waitFor();
@@ -372,8 +394,8 @@ try {
   const cell2 = await firstEmpty(ui);
   await ui.locator(`[data-cell="${cell2}"]`).click();
   await ui.locator(`[data-cell="${cell2}"]`).press('6');
-  await hostPage.waitForFunction(c => window.calls.some(k => k.arguments.cells[c] === '6') && window.contexts.some(k => /6/.test(k.content[0].text.split('\n').slice(1, 12).join(''))), cell2);
-  const call = await hostPage.evaluate(c => window.calls.findLast(k => k.arguments.cells[c] === '6'), cell2);
+  await hostPage.waitForFunction(c => window.calls.some(k => k.arguments.cells?.[c] === '6') && window.contexts.some(k => /6/.test(k.content[0].text.split('\n').slice(1, 12).join(''))), cell2);
+  const call = await hostPage.evaluate(c => window.calls.findLast(k => k.arguments.cells?.[c] === '6'), cell2);
   assert.equal(call.name, 'zensudoku_report');
   assert.equal(call.arguments.puzzleId, custom);
   assert.equal(call.arguments.cells[cell2], '6');
@@ -570,6 +592,128 @@ try {
   await mcp.callTool({ name: 'zensudoku_new', arguments: {} });
   await boardPage.evaluate(() => window.sendResult({ puzzleId: 'example-classic' }));
   await liveBoard.locator('.grid:not(.pad)').waitFor();
+
+
+  // Real plugin data, with an opaque iframe and no browser storage. No private fixtures.
+  const data = mkdtempSync(path.join(tmpdir(), 'zensudoku-resume-'));
+  const libraryPath = path.join(data, 'library');
+  mkdirSync(libraryPath);
+  const localSource = path.join(libraryPath, 'resume-test.json');
+  writeFileSync(localSource, JSON.stringify({ id: 'resume-test', title: 'Synthetic library', source: TINY_SCL }));
+  let plugin;
+  async function startPlugin() {
+    plugin = new Client({ name: 'resume-e2e', version: '0' });
+    await plugin.connect(new StdioClientTransport({ command: process.execPath, args: ['mcp/dist/server.js'], cwd: root,
+      env: { PATH: process.env.PATH ?? '', ZEN_PLUGIN_DATA: data } }));
+  }
+  try {
+    await startPlugin();
+    const persisted = await browser.newPage({ viewport: { width: 600, height: 1150 } });
+    watch(persisted);
+    let releaseLoad, waitLoad, calls;
+    await persisted.exposeFunction('liveTools', async params => {
+      if (params.name === 'zensudoku_resume' && !params.arguments.save && waitLoad) {
+        releaseLoad();
+        await waitLoad;
+      }
+      const result = await plugin.callTool(params);
+      if (params.name === 'zensudoku_resume' && params.arguments.save) {
+        assert.equal(result.structuredContent?.saved, true);
+        calls = params.arguments.save;
+      }
+      return result;
+    });
+    await persisted.goto(base + '/host.html');
+    const board = persisted.frameLocator('#f');
+    await board.locator('.grid').waitFor();
+    assert.equal(await board.locator('html').evaluate(() => {
+      try { void localStorage; return false; } catch { return true; }
+    }), true);
+    const saved = () => JSON.parse(JSON.parse(readFileSync(path.join(data, 'resume-v1.json'), 'utf8')).game);
+    // Play the built-in, then close and reopen the game.
+    const builtin = JSON.parse(readFileSync(path.join(root, 'core/catalog.json'), 'utf8')).puzzles[0];
+    await persisted.evaluate(id => window.sendResult({ puzzleId: id }), builtin.id);
+    await board.getByText(builtin.name, { exact: true }).waitFor();
+    const builtinCell = await firstEmpty(board);
+    await board.locator(`[data-cell="${builtinCell}"]`).click();
+    await board.locator(`[data-cell="${builtinCell}"]`).press('3');
+    await persisted.waitForFunction(({ id, i }) => window.calls.some(c => {
+      const g = c.arguments.save && JSON.parse(c.arguments.save.game);
+      return g?.puzzleId === id && g.boards[id].cells[i] === 3;
+    }), { id: builtin.id, i: builtinCell });
+    await persisted.evaluate(async () => { await window.remount(); });
+    await board.getByText(builtin.name, { exact: true }).waitFor();
+    assert.equal(await board.locator(`[data-cell="${builtinCell}"]`).getAttribute('data-value'), '3');
+
+    await board.getByRole('button', { name: 'Puzzles' }).click();
+    await board.locator('[data-id="resume-test"]').click();
+    await board.getByText('Synthetic library', { exact: true }).waitFor();
+    const libCell = board.locator('[data-cell="2"]');
+    await libCell.click();
+    await libCell.press('c');
+    await libCell.press('3');
+    await libCell.press('m');
+    await libCell.press('4');
+    await board.getByRole('button', { name: 'Color Blue' }).click();
+    await persisted.waitForFunction(() => window.calls.some(c => {
+      const g = c.arguments.save && JSON.parse(c.arguments.save.game);
+      return g?.boards['lib-resume-test']?.colors[2] === 5;
+    }));
+    await persisted.reload();
+    await board.getByText('Synthetic library', { exact: true }).waitFor();
+    assert.equal(await libCell.getAttribute('data-corner'), '3');
+    assert.equal(await libCell.getAttribute('data-center'), '4');
+    assert.equal(await libCell.getAttribute('data-color'), '5');
+    assert.match(await libCell.getAttribute('class'), /selected/);
+    assert.equal(saved().boards[builtin.id].cells[builtinCell], 3);
+
+    // Explicit request arriving during hydration wins, and its import survives a server restart.
+    const requested = await plugin.callTool({ name: 'zensudoku_new', arguments: { puzzle: LINE_SCL } });
+    const importId = requested.structuredContent.puzzleId;
+    let unblock;
+    waitLoad = new Promise(resolve => { unblock = resolve; });
+    const pending = new Promise(resolve => { releaseLoad = resolve; });
+    await persisted.evaluate(() => window.remount());
+    await pending;
+    await persisted.evaluate(id => window.sendResult({ puzzleId: id }), importId);
+    unblock();
+    waitLoad = undefined;
+    await board.locator('.grid.pad polyline').first().waitFor();
+    await board.locator('[data-cell="2"]').click();
+    await board.getByRole('button', { name: 'Color Blue' }).click();
+    await persisted.waitForFunction(id => window.calls.some(c => {
+      const g = c.arguments.save && JSON.parse(c.arguments.save.game);
+      return g?.boards[id]?.colors[2] === 5;
+    }), importId);
+    // Confirm disk before restarting the server, not merely that the app sent a request.
+    for (let i = 0; i < 50 && saved().boards[importId]?.colors[2] !== 5; i++) await new Promise(r => setTimeout(r, 20));
+    assert.equal(saved().boards[importId].colors[2], 5);
+    assert.equal((await plugin.callTool({ name: 'zensudoku_resume', arguments: { save: {
+      ...calls, revision: calls.revision - 1, game: '{}',
+    } } })).structuredContent.saved, true);
+    assert.equal(saved().puzzleId, importId, 'out-of-order write did not replace the latest save');
+    await plugin.close();
+    await startPlugin();
+    await persisted.evaluate(() => window.remount());
+    await board.locator('.grid.pad polyline').first().waitFor();
+    assert.equal(await board.locator('[data-cell="2"]').getAttribute('data-color'), '5');
+
+    await persisted.evaluate(() => window.sendResult({ puzzleId: 'lib-resume-test' }));
+    await board.getByText('Synthetic library', { exact: true }).waitFor();
+    for (let i = 0; i < 50 && saved().puzzleId !== 'lib-resume-test'; i++) await new Promise(r => setTimeout(r, 20));
+    assert.equal(saved().puzzleId, 'lib-resume-test');
+    rmSync(localSource);
+    await persisted.reload();
+    await board.getByText(builtin.name, { exact: true }).waitFor();
+    assert.equal(await board.locator(`[data-cell="${builtinCell}"]`).getAttribute('data-value'), '3');
+    writeFileSync(path.join(data, 'resume-v1.json'), '{broken');
+    await persisted.evaluate(() => window.remount());
+    await board.getByText('Example — classic', { exact: true }).waitFor();
+    await persisted.close();
+  } finally {
+    await plugin?.close();
+    rmSync(data, { recursive: true, force: true });
+  }
 
   assert.deepEqual(errors.filter(e => !/localStorage|Failed to read the 'localStorage'|SecurityError|sandbox/i.test(e)), [], 'no page errors');
   console.log('e2e ok: PWA (play, undo, notes, reload, hint, enter, SudokuPad import, offline, solve) and MCP App (handshake, result, report, zen keys and commands, library, inline helper)');
