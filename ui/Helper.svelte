@@ -1,9 +1,8 @@
 <script lang="ts">
   import { comboFits, digitsIn, killerCombos, sandwichSets } from '../core/calc.ts';
 
-  let { digits = 9, cell = '', cage = null, title = '', author = '', rules = [], status = '' }: {
+  let { digits = 9, cell = '', cage = null }: {
     digits?: number; cell?: string; cage?: { sum: number; size: number; placed: number[] } | null;
-    title?: string; author?: string; rules?: string[]; status?: string;
   } = $props();
   let sum = $state<number | undefined>(17), size = $state<number | undefined>(3);
   let include = $state(''), exclude = $state('');
@@ -15,14 +14,6 @@
 </script>
 
 <section class="helper" aria-label="Sudoku helper">
-  {#if title}
-    <header><h1>{title}</h1>{#if author}<p>By {author}</p>{/if}</header>
-    <div class="card">
-      <h2>Puzzle rules</h2>
-      {#each rules as rule}<p class="rule">{rule}</p>{/each}
-    </div>
-  {/if}
-  {#if status}<p role="status">{status}</p>{/if}
   <div class="card" data-testid="selected-cage">
     <h2>Selected cage</h2>
     {#if cage}
@@ -66,14 +57,12 @@
 <style>
   .helper { display: grid; gap: 10px; color: var(--ink); padding: 12px; min-width: 0; overflow-wrap: anywhere; }
   .card { background: var(--soft); border: 1px solid var(--faint); border-radius: var(--r-md); padding: 12px; min-width: 0; }
-  h1, h2, h3 { margin: 0 0 6px; font-family: var(--heading); }
-  h1 { font-size: 1.2rem; }
+  h2, h3 { margin: 0 0 6px; font-family: var(--heading); }
   h2 { font-size: 1rem; }
   h3 { font-size: .85rem; margin-top: 10px; }
   p, label { font-size: .85rem; line-height: 1.45; }
   p { margin: 0 0 8px; color: var(--dim); }
   p:last-child { margin-bottom: 0; }
-  .rule { color: var(--ink); white-space: pre-line; }
   .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   label { display: grid; gap: 3px; }
   input { width: 100%; min-width: 0; padding: 6px 8px; background: var(--paper); color: var(--ink); border: 1px solid var(--faint); border-radius: var(--r-sm); font: inherit; font-size: 1rem; }

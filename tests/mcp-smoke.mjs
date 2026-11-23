@@ -27,7 +27,7 @@ try {
   // tools
   const { tools } = await client.listTools();
   const names = tools.map(t => t.name).sort();
-  assert.deepEqual(names, ['zensudoku_check', 'zensudoku_helper', 'zensudoku_hint', 'zensudoku_library', 'zensudoku_new', 'zensudoku_open', 'zensudoku_puzzle', 'zensudoku_report', 'zensudoku_state']);
+  assert.deepEqual(names, ['zensudoku_check', 'zensudoku_hint', 'zensudoku_library', 'zensudoku_new', 'zensudoku_open', 'zensudoku_puzzle', 'zensudoku_report', 'zensudoku_state']);
   const byName = Object.fromEntries(tools.map(t => [t.name, t]));
   assert.equal(byName.zensudoku_new._meta.ui.resourceUri, 'ui://zensudoku/app');
   assert.deepEqual(byName.zensudoku_report._meta.ui.visibility, ['app']);
@@ -39,13 +39,12 @@ try {
   assert.deepEqual(manifest.kernel, []);
   assert.equal(manifest.name, 'zensudoku');
   assert.deepEqual(manifest.contributes.games.map(g => [g.id, g.ui]), [['sudoku', 'ui://zensudoku/app']]);
-  assert.deepEqual(manifest.contributes.views.map(v => [v.id, v.ui]), [['helper', 'ui://zensudoku/helper']]);
-  assert.deepEqual(byName.zensudoku_helper._meta.ui, { resourceUri: 'ui://zensudoku/helper', visibility: ['app'] });
   assert.ok(names.every(n => n.startsWith('zensudoku_')));
 
   // resources
+  assert.equal(manifest.contributes.views, undefined);
   const { resources } = await client.listResources();
-  assert.deepEqual(resources.map(r => r.uri), ['ui://zensudoku/app', 'ui://zensudoku/helper']);
+  assert.deepEqual(resources.map(r => r.uri), ['ui://zensudoku/app']);
   assert.equal(resources[0].mimeType, 'text/html;profile=mcp-app');
   const ui = await client.readResource({ uri: 'ui://zensudoku/app' });
   assert.equal(ui.contents[0].mimeType, 'text/html;profile=mcp-app');
@@ -59,19 +58,6 @@ try {
   assert.equal(opened.structuredContent.puzzleId, 'example-classic');
   assert.equal(opened.structuredContent.givens, catalog.givens.replace(/0/g, '.'));
   assert.match(text(opened), /Example — classic/);
-
-  const helper = await client.readResource({ uri: 'ui://zensudoku/helper' });
-  assert.match(helper.contents[0].text, /<div id="app" data-view="helper"><\/div>/);
-  const readHelper = async () => (await client.callTool({ name: 'zensudoku_helper', arguments: {} })).structuredContent;
-  const before = await readHelper();
-  assert.match(before.rule, /row, column and box/);
-  assert.equal(before.selected, 0);
-  const selection = await client.callTool({ name: 'zensudoku_report', arguments: { puzzleId: before.puzzleId, cells: opened.structuredContent.givens, selected: 1 } });
-  assert.ok(!selection.isError);
-  const moved = await readHelper();
-  assert.equal(moved.cell, 'R1C2');
-  assert.ok(moved.version > before.version);
-  assert.equal(moved.cage, null);
 
   // zensudoku_state
   const state = await client.callTool({ name: 'zensudoku_state', arguments: {} });

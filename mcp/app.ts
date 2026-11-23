@@ -1,5 +1,5 @@
-// The Sudoku MCP server: six tools for an agent, three for the app, and two HTML resources: the board
-// (ui://zensudoku/app) and the Sudoku helper (ui://zensudoku/helper, the same bundle in helper mode).
+// The Sudoku MCP server: six tools for an agent, two for the app, and one HTML resource: the board
+// (ui://zensudoku/app).
 //
 //   zensudoku_new      open the example, a classic puzzle or a SudokuPad source; shows the board UI
 //   zensudoku_library  the puzzles in the local library ($ZEN_PLUGIN_DATA/library)
@@ -9,47 +9,22 @@
 //   zensudoku_hint     one next logical step (a naked or hidden single), explained; never the solution
 //   zensudoku_report   the UI tells the server its board (visible to the app only)
 //   zensudoku_puzzle   the UI asks for a SudokuPad puzzle's source by id (visible to the app only)
-//   zensudoku_helper   the helper view asks what the board shows: the puzzle's rules and the selected cell's
-//                      cage; with `since` it waits (up to 25 s) for the next change (visible to the app only)
 //
 // The UI keeps the server and the chat in sync (host.ts), so state/check/hint see what the player sees.
 import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { RESOURCE_MIME_TYPE, registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server';
 import { z } from 'zod';
-import { VARIANT_LABEL, VARIANT_RULE, verdict, wrongEntries } from '../core/sudoku.ts';
-import { cageOf } from '../core/calc.ts';
+import { verdict, wrongEntries } from '../core/sudoku.ts';
 import { MAX_SOURCE } from '../core/sudokupad.ts';
 import { hint } from '../core/hint.ts';
-import { activeCells, coord, digitsOf } from '../core/sudoku-extra.ts';
+import { activeCells, coord } from '../core/sudoku-extra.ts';
 import { conflictList, renderGrid } from '../core/text.ts';
-import { findPuzzle, open, openLibrary, report, sourceOf, start, text, versionNow, waitForChange } from './session.ts';
+import { findPuzzle, open, openLibrary, report, sourceOf, start, text } from './session.ts';
 import type { Session } from './session.ts';
 import { readLibrary } from './library.ts';
 
 export const UI_URI = 'ui://zensudoku/app';
-export const HELPER_URI = 'ui://zensudoku/helper';
-/** The longest a helper call waits for a change (well under the hosts' request timeouts). */
-export const MAX_WAIT_S = 25;
-
-/** The helper view: the board's bundle, told by its mount point to start in helper mode (ui/host.ts). */
-export function helperHtml(html: string): string {
-  const at = '<div id="app"></div>';
-  if (!html.includes(at)) throw new Error('The Sudoku UI has no <div id="app"></div> to start the helper from.');
-  return html.replace(at, '<div id="app" data-view="helper"></div>');
-}
-
-/** What the helper view shows: the open puzzle's rules and the selected cell's cage, with the change counter. */
-export function helperState(s: Session) {
-  const { puzzle: p, cells, selected } = s, pad = p.pad, cage = cageOf(p, selected);
-  return {
-    version: versionNow(), puzzleId: p.id, name: p.name, variant: p.variant, variantLabel: VARIANT_LABEL[p.variant],
-    title: pad?.title || p.name, author: pad?.author ?? '', rules: pad ? pad.rules : [], rule: VARIANT_RULE[p.variant], video: pad?.video ?? '',
-    digits: digitsOf(p), selected, cell: coord(p, selected), hasCages: !!(p.cages.length || pad?.cages.some(c => c.sum != null)),
-    cage: cage ? { sum: cage.sum, size: cage.cells.length, cells: cage.cells.map(i => coord(p, i)), placed: cage.cells.map(i => cells[i]).filter(Boolean) } : null,
-  };
-}
-
 const reply = (message: string, structured: Record<string, unknown>) => ({ content: [{ type: 'text' as const, text: message }], structuredContent: structured });
 const fail = (message: string) => ({ content: [{ type: 'text' as const, text: message }], isError: true });
 
@@ -73,20 +48,13 @@ const rulesText = (d: ReturnType<typeof describe>) => d.rules ? `\nBy ${d.author
 
 /** `loadHtml` returns the built UI; the default reads ui/dist/index.html next to this server's build. */
 export function createServer(loadHtml: () => string = defaultHtml): McpServer {
-  const server = new McpServer({ name: 'zensudoku', version: '0.5.1' });
+  const server = new McpServer({ name: 'zensudoku', version: '0.6.1' });
 
   registerAppResource(server, 'Sudoku board', UI_URI, {
     description: 'The Sudoku board: notes, colors, undo, hints.',
     _meta: { ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } } },
   }, async () => ({
     contents: [{ uri: UI_URI, mimeType: RESOURCE_MIME_TYPE, text: loadHtml(), _meta: { ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } } } }],
-  }));
-
-  registerAppResource(server, 'Sudoku helper', HELPER_URI, {
-    description: 'The Sudoku helper: the open puzzle\'s rules, the selected cage\'s combinations, and a killer and sandwich calculator.',
-    _meta: { ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } } },
-  }, async () => ({
-    contents: [{ uri: HELPER_URI, mimeType: RESOURCE_MIME_TYPE, text: helperHtml(loadHtml()), _meta: { ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } } } }],
   }));
 
   registerAppTool(server, 'zensudoku_new', {
@@ -184,22 +152,6 @@ export function createServer(loadHtml: () => string = defaultHtml): McpServer {
     const p = findPuzzle(puzzleId), source = p && sourceOf(p.id);
     if (!p || !source) return fail('Unknown puzzle.');
     return reply('ok', { puzzleId: p.id, source, library: p.library ?? null });
-  });
-
-  registerAppTool(server, 'zensudoku_helper', {
-    title: 'Sudoku helper state',
-    description: `For the app only: what the board shows, for the helper view: the puzzle's title, author and rules, the selected cell and its killer cage (total, size, digits placed in it), and a change counter (version). With \`since\` equal to the last version seen, it waits up to \`wait\` seconds (at most ${MAX_WAIT_S}) for the next change before answering.`,
-    inputSchema: {
-      since: z.number().int().min(0).optional().describe('The version the caller already has.'),
-      wait: z.number().min(0).max(MAX_WAIT_S).optional().describe('Seconds to wait for a change when nothing changed since `since`.'),
-    },
-    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
-    _meta: { ui: { resourceUri: HELPER_URI, visibility: ['app'] } },
-  }, async ({ since, wait }) => {
-    if (since !== undefined) await waitForChange(since, Math.min(wait ?? 0, MAX_WAIT_S) * 1000);
-    const h = helperState(open());
-    const cage = h.cage ? ` Cage ${h.cage.sum} in ${h.cage.size}${h.cage.placed.length ? `, placed ${h.cage.placed.join(' ')}` : ''}.` : '';
-    return reply(`"${h.title}" (${h.variantLabel}), ${h.cell} selected.${cage}`, h);
   });
 
   return server;

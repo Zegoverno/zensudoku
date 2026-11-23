@@ -19,8 +19,6 @@ import { mount } from 'svelte';
 import { z } from 'zod';
 import './app.css';
 import Sudoku from './Sudoku.svelte';
-import HelperView from './HelperView.svelte';
-import type { helperState } from '../mcp/app.ts';
 import { browserStorage } from './adapters.ts';
 import type { LibraryItem, LibrarySource, Snapshot, SourceEntry } from './adapters.ts';
 import { createStore } from './state.svelte.ts';
@@ -34,7 +32,6 @@ import type { Avail } from './zen-keys.ts';
 
 const app = new App({ name: 'zensudoku', version: '0.5.1' });
 const target = document.getElementById('app')!;
-const helper = target.dataset.view === 'helper';
 
 /** Follows the host's theme, CSS variables and size, and records where zenbot shows us. */
 function applyContext(ctx: ReturnType<App['getHostContext']>) {
@@ -131,25 +128,5 @@ function mountBoard() {
   return () => { connected = true; sendCommands(); };
 }
 
-function mountHelper() {
-  app.onhostcontextchanged = () => applyContext(app.getHostContext());
-  app.setNotificationHandler(notification('zen/focus'), n => {
-    if (focused(n.params)) target.querySelector<HTMLInputElement>('input')?.focus();
-  });
-  mount(HelperView, { target, props: {
-    read: async () => {
-      const result = await app.callServerTool({ name: 'zensudoku_helper', arguments: {} });
-      if (result.isError || typeof result.structuredContent?.version !== 'number') throw new Error('No helper state');
-      return result.structuredContent as ReturnType<typeof helperState>;
-    },
-    onkey: (e: KeyboardEvent, typing: boolean) => { if (host.zen) void zen('zen/key', keyPayload(e, typing)); },
-  } });
-}
-
-
-if (helper) {
-  app.connect().then(() => { applyContext(app.getHostContext()); mountHelper(); });
-} else {
-  const connected = mountBoard();
-  app.connect().then(() => { applyContext(app.getHostContext()); connected(); });
-}
+const connected = mountBoard();
+app.connect().then(() => { applyContext(app.getHostContext()); connected(); });

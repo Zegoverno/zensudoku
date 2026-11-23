@@ -5,7 +5,7 @@ marking. It also plays [SudokuPad](https://sudokupad.app) puzzles, drawn the way
 them, from a source you import or from a local library of your own. One code base, three ways to run it:
 
 - a **PWA**: static files, installable on desktop and Android, works offline;
-- a **[zenbot](https://github.com/Zegoverno/zenbot) plugin**: an entry in the Games tab, a Sudoku helper side view, a `/sudoku` command, and a coaching skill;
+- a **[zenbot](https://github.com/Zegoverno/zenbot) plugin**: an entry in the Games tab, a `/sudoku` command, and a coaching skill;
 - an **MCP App**: the board as an inline widget in any host that supports
   [MCP Apps](https://modelcontextprotocol.io) (Claude, ChatGPT and others), with tools the agent can call.
 
@@ -203,7 +203,7 @@ SudokuPad artwork is only recognized when an explicit, unambiguous outside-clue 
 position identify a sandwich sum. Other outside numbers remain ordinary artwork.
 
 Open the collapsible **Sudoku helper** inside the game for the full calculators. It sits beside the
-board on a wide screen and below it on a phone. The standalone zenbot helper view still works.
+board on a wide screen and below it on a phone.
 
 - **Selected cage:** a numbered cage shows every distinct-digit set for its sum and size.
   Sets that cannot contain the digits already entered in the cage are greyed out and crossed
