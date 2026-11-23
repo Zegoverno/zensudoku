@@ -38,7 +38,7 @@ try {
   assert.ok(!existsSync(path.join(dir, 'node_modules')));
   const smoke = spawnSync(process.execPath, [path.join(root, 'tests/mcp-smoke.mjs'), dir], { encoding: 'utf8' });
   assert.equal(smoke.status, 0, `smoke test failed against the unpacked archive:\n${smoke.stdout}\n${smoke.stderr}`);
-  assert.match(smoke.stdout, /mcp smoke ok: 9 tools/);
+  assert.match(smoke.stdout, /mcp smoke ok: 8 tools, 1 resources/);
   console.log(`pack ok: ${path.basename(archive)} sha256 ${sha}, ${paths.length} files; ${smoke.stdout.trim()} (from the unpacked archive)`);
 } finally {
   rmSync(dir, { recursive: true, force: true });

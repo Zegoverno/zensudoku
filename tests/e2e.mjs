@@ -49,12 +49,6 @@ const HOST = `<!doctype html><meta charset=utf-8><title>host</title><body style=
 const VARS = ${JSON.stringify(VARS)};
 let ctx = { theme: 'dark', displayMode: 'inline', styles: { variables: VARS }, containerDimensions: { width: 560, height: 1100 }, zen: { pane: 'board', phone: false, slot: 'game', headingFont: 'Georgia, serif' } };
 if (location.search === '?native-theme') ctx.styles = undefined;
-const helper = location.pathname === '/helper-host.html';
-if (helper) {
-  frameSize();
-  ctx = { ...ctx, theme: 'dark', styles: undefined, containerDimensions: { width: 360, height: 850 }, zen: { pane: 'side', slot: 'view' } };
-}
-function frameSize() { const el = document.getElementById('f'); el.style.width = '360px'; el.style.height = '850px'; }
 window.calls = []; window.contexts = []; window.zenmsgs = []; window.links = []; window.ready = false; window.toolReply = null;
 const frame = document.getElementById('f');
 const reply = (id, result) => frame.contentWindow.postMessage({ jsonrpc: '2.0', id, result }, '*');
@@ -73,17 +67,15 @@ window.setContext = patch => { ctx = { ...ctx, ...patch }; frame.contentWindow.p
 window.resize = (w, h, zen) => { frame.style.width = w + 'px'; frame.style.height = h + 'px'; window.setContext({ containerDimensions: { width: w, height: h }, ...(zen ? { zen: { ...ctx.zen, ...zen } } : {}) }); };
 window.zenSend = (method, params) => frame.contentWindow.postMessage({ jsonrpc: '2.0', method, params }, '*');
 window.sendResult = structuredContent => frame.contentWindow.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: { content: [{ type: 'text', text: 'opened' }], structuredContent } }, '*');
-fetch(helper ? '/helper.html' : '/ui.html').then(r => r.text()).then(html => { frame.srcdoc = html; });
+fetch('/ui.html').then(r => r.text()).then(html => { frame.srcdoc = html; });
 </script>`;
 
 const mcp = new Client({ name: 'e2e', version: '0' });
 await mcp.connect(new StdioClientTransport({ command: process.execPath, args: ['mcp/dist/server.js'], cwd: root, env: { PATH: process.env.PATH ?? '' } }));
-const helperHtml = (await mcp.readResource({ uri: 'ui://zensudoku/helper' })).contents[0].text;
 
 const http = createServer((req, res) => {
   const url = new URL(req.url, 'http://x').pathname;
-  if (url === '/host.html' || url === '/helper-host.html') { res.setHeader('content-type', 'text/html'); return res.end(HOST); }
-  if (url === '/helper.html') { res.setHeader('content-type', 'text/html'); return res.end(helperHtml); }
+  if (url === '/host.html') { res.setHeader('content-type', 'text/html'); return res.end(HOST); }
   const file = url === '/ui.html' ? path.join(root, 'ui/dist/index.html') : path.join(dist, url === '/' ? 'index.html' : url);
   if (!file.startsWith(root) || !existsSync(file)) { res.statusCode = 404; return res.end('no'); }
   res.setHeader('content-type', types[path.extname(file)] ?? 'application/octet-stream');
@@ -510,7 +502,7 @@ try {
   await ui.getByRole('button', { name: 'Hint' }).click();
   assert.match(await ui.getByTestId('hint').textContent(), /aren't available for this variant/);
 
-  // Board and helper in separate sandboxed frames, connected to the same real MCP process.
+  // Inline clue popover and helper on a phone, in the MCP board.
   const cageSource = TINY.replace("ca:[", "ca:[{ce:[[0,2],[0,3]],v:5},");
   const openedCage = await mcp.callTool({ name: 'zensudoku_new', arguments: { puzzle: cageSource } });
   assert.ok(!openedCage.isError);
@@ -528,9 +520,6 @@ try {
   }, openedCage.structuredContent.puzzleId);
   const liveBoard = boardPage.frameLocator('#f');
   await liveBoard.locator('.grid.pad').waitFor();
-  await ui.getByText('Sudoku helper', { exact: true }).click();
-  await ui.getByLabel('Cage sum').waitFor();
-  await ui.getByText('Sudoku helper', { exact: true }).click();
   assert.equal(await liveBoard.locator('body').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(27, 28, 25)');
   const cageClue = liveBoard.getByRole('button', { name: 'Killer cage sum 5 in 2 cells' });
   const cageResults = liveBoard.locator('[data-testid=clue-results]:popover-open');
@@ -553,13 +542,8 @@ try {
   await cageResults.waitFor();
   await boardPage.keyboard.press('Escape');
   await cageResults.waitFor({ state: 'hidden' });
-  const helperPage = await browser.newPage({ viewport: { width: 360, height: 850 } });
-  watch(helperPage);
-  await live(helperPage);
-  await helperPage.goto(base + '/helper-host.html');
-  const panel = helperPage.frameLocator('#f');
-  await panel.getByRole('heading', { name: 'Tiny', exact: true }).waitFor();
-  assert.equal(await panel.getByText('Normal sudoku rules apply.').count(), 1);
+  await liveBoard.getByText('Sudoku helper', { exact: true }).click();
+  const panel = liveBoard.getByRole('region', { name: 'Sudoku helper' });
   await boardPage.evaluate(() => { window.ignoreReports = false; });
   await liveBoard.locator('[data-cell="2"]').tap();
   const selected = panel.getByTestId('selected-cage');
@@ -579,21 +563,16 @@ try {
   await panel.getByText('Empty', { exact: true }).waitFor();
   await panel.getByLabel('Sandwich sum').fill('5');
   await panel.getByRole('heading', { name: '2 digits', exact: true }).waitFor();
-  assert.equal(await panel.locator('html').evaluate(el => el.scrollWidth <= el.clientWidth), true);
-  await panel.locator('html[data-theme="dark"]').waitFor();
-  await shot(helperPage, 'helper-360-dark');
-  await helperPage.evaluate(() => window.setContext({ theme: 'light' }));
-  await panel.locator('html[data-theme="light"]').waitFor();
-  await shot(helperPage, 'helper-360-light');
+  assert.equal(await liveBoard.locator('html').evaluate(el => el.scrollWidth <= el.clientWidth), true);
 
   await liveBoard.locator('[data-cell="2"]').press('ArrowLeft');
   await selected.getByText(/R1C2 is not in a numbered cage/).waitFor();
   await mcp.callTool({ name: 'zensudoku_new', arguments: {} });
   await boardPage.evaluate(() => window.sendResult({ puzzleId: 'example-classic' }));
-  await panel.getByRole('heading', { name: 'Example — classic', exact: true }).waitFor();
+  await liveBoard.locator('.grid:not(.pad)').waitFor();
 
   assert.deepEqual(errors.filter(e => !/localStorage|Failed to read the 'localStorage'|SecurityError|sandbox/i.test(e)), [], 'no page errors');
-  console.log('e2e ok: PWA (play, undo, notes, reload, hint, enter, SudokuPad import, offline, solve) and MCP App (handshake, result, report, zen keys and commands, library, live helper)');
+  console.log('e2e ok: PWA (play, undo, notes, reload, hint, enter, SudokuPad import, offline, solve) and MCP App (handshake, result, report, zen keys and commands, library, inline helper)');
 } finally {
   await browser.close();
   http.close();
