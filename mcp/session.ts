@@ -36,8 +36,8 @@ export function waitForChange(since: number, ms: number): Promise<void> {
 
 /** The library entry's puzzle, or why it cannot be opened. */
 export function libraryPuzzle(entry: LibraryEntry): Puzzle | string {
-  const { id, collection, number, title, author, video } = entry;
-  const p = padPuzzle(entry.source, { id, collection, number, title, author, video });
+  const { id, collection, number, title, author, video, difficulty, variants, tags } = entry;
+  const p = padPuzzle(entry.source, { id, collection, number, title, author, video, difficulty, variants, tags });
   if (typeof p !== 'string') sources.set(p.id, entry.source);
   return p;
 }

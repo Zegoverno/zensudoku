@@ -112,7 +112,7 @@ export function createServer(loadHtml: () => string = defaultHtml): McpServer {
     if (!lib.available) return reply('The library is empty here: this host gives the plugin no data folder (ZEN_PLUGIN_DATA), so there is no local library. Open a puzzle with zensudoku_new instead.', { available: false, count: 0, errors: 0, entries: [] });
     const q = (query ?? '').trim().toLowerCase();
     const entries = lib.entries.filter(e => !q || [e.id, e.number, e.title, e.author].some(s => s?.toLowerCase().includes(q)))
-      .map(({ id, collection, number, title, author }) => ({ id, collection, number, title, author }));
+      .map(({ id, collection, number, title, author, difficulty, variants, tags }) => ({ id, collection, number, title, author, difficulty, variants, tags }));
     const lines = entries.map(e => `${e.id}: ${[e.number, e.title].filter(Boolean).join(' · ') || e.id}${e.author ? ` (${e.author})` : ''}${e.collection ? ` [${e.collection}]` : ''}`);
     const head = lib.entries.length ? `${entries.length} of ${lib.entries.length} puzzle(s) in the library.` : 'The library is empty: put SudokuPad puzzles (.json or .txt) in the plugin\'s data folder, under library/.';
     const errs = lib.errors.length ? `\n${lib.errors.length} file(s) could not be read: ${lib.errors.slice(0, 10).join('; ')}${lib.errors.length > 10 ? '; …' : ''}` : '';

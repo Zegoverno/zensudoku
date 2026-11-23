@@ -146,6 +146,7 @@ export interface PadRect {
   x: number; y: number; w: number; h: number; rx: number; angle: number;
   fill: string; stroke: string; strokeWidth: number; opacity: number; fillOpacity: number; strokeOpacity: number;
   text: PadText | null;
+  sandwich?: boolean;
 }
 export interface PadPath { points: [number, number][]; color: string; width: number; opacity: number; dash: string; fill: string; cap: 'round' | 'butt'; join: 'round' | 'miter' }
 export interface PadCage {
@@ -176,6 +177,7 @@ export interface PadModel {
   under: PadRect[]; lines: PadPath[]; cages: PadCage[]; regionEdges: Seg[]; over: PadRect[];
   /** Givens outside the played area, drawn like clues. */
   outsideGivens: PadText[];
+  sandwichClues: PadText[];
   /** The drawing's extent, in cell units. */
   bounds: { x: number; y: number; w: number; h: number };
 }
@@ -212,7 +214,7 @@ function rect(part: Record<string, unknown>): PadRect | null {
   const out: PadRect = {
     x: centre[0] - w / 2 + bs / 2, y: centre[1] - h / 2 + bs / 2, w: Math.max(0, w - bs), h: Math.max(0, h - bs),
     rx: part.rounded === true ? Math.max(0, 0.5 * (Math.min(w, h) - bs)) : 0, angle: num(part.angle),
-    fill, stroke: border, strokeWidth: bs, opacity: num(part.opacity, 1), fillOpacity: legacy ? .5 : 1, strokeOpacity: legacy ? .5 : 1, text: null,
+    fill, stroke: border, strokeWidth: bs, opacity: num(part.opacity, 1), fillOpacity: legacy ? .5 : 1, strokeOpacity: legacy ? .5 : 1, text: null, sandwich: part.sandwich === true || undefined,
   };
   const t = textOf(part.text);
   if (t !== '') {
@@ -384,6 +386,19 @@ export function buildModel(p: Record<string, unknown>): PadModel | string {
   const under = list(p.underlays).map(obj).map(part => unbordered(rect(part))).filter((r): r is PadRect => !!r);
   const over = list(p.overlays).map(obj).map(part => unbordered(rect(part))).filter((r): r is PadRect => !!r);
   const paths = [...list(p.arrows).map(obj).flatMap(a => path(a, true)), ...list(p.lines).map(obj).flatMap(l => path(l))];
+  // SCL often stores every clue as plain artwork. Only accept untyped exterior labels when
+  // the rules explicitly define exterior clues as sandwich sums (not merely mention sandwiches).
+  const sandwichRules = digits === 9 && /^(?:(?:normal|standard|classic) sudoku rules apply\.\s*)?(?:an? |the )?clues? outside the grid (?:shows?|gives?|indicates?) the sum of (?:the )?digits (?:sandwiched )?between (?:the )?1 and (?:the )?9 in (?:that|its|the corresponding) (?:row\/column|row or column)\.?$/i.test(meta.rules.join(' ').trim());
+  const aligns = (t: PadText) => {
+    const [x, y, w, h] = [c0, r0, c1 - c0 + 1, r1 - r0 + 1];
+    const r = Math.floor(t.y), c = Math.floor(t.x);
+    return !t.angle && ((r >= y && r < y + h && (c === x - 1 || c === x + w)) ||
+      (c >= x && c < x + w && (r === y - 1 || r === y + h)));
+  };
+  const sandwichClues = [
+    ...over.filter(r => r.text && (r.sandwich || sandwichRules)).map(r => r.text!),
+    ...(sandwichRules ? outsideGivens : []),
+  ].filter(t => /^\s*\d{1,3}\s*$/.test(t.text) && aligns(t));
   const cages: PadCage[] = [];
   for (const cage of list(p.cages).map(obj)) {
     const cells = list(cage.cells).map(rc => Array.isArray(rc) ? [num(rc[0], NaN), num(rc[1], NaN)] as [number, number] : null)
@@ -437,7 +452,7 @@ export function buildModel(p: Record<string, unknown>): PadModel | string {
   return {
     rows, cols, digits, givens, active, units, origin: [r0, c0], grid: gridRect,
     title: meta.title ?? '', author: meta.author ?? '', rules: meta.rules.filter(Boolean), solution, video, classic,
-    under, lines: paths, cages, regionEdges, over, outsideGivens,
+    under, lines: paths, cages, regionEdges, over, outsideGivens, sandwichClues,
     bounds: { x: x0 - m, y: y0 - m, w: x1 - x0 + 2 * m, h: y1 - y0 + 2 * m },
   };
 }
@@ -549,7 +564,7 @@ export function fromFPuzzles(f: unknown): Record<string, unknown> {
   each('even', part => underlays.push({ borderColor: '#CFCFCF', backgroundColor: '#CFCFCF', center: centreOf(part), rounded: false, width: .7, height: .7 }));
   each('odd', part => underlays.push({ borderColor: '#CFCFCF', backgroundColor: '#CFCFCF', center: centreOf(part), rounded: true, width: .7, height: .7 }));
   each('palindrome', part => fLines(part).forEach(pts => lines.push({ color: '#CFCFCF', thickness: 16, wayPoints: pts })));
-  each('sandwichsum', part => overlays.push({ backgroundColor: '#FFFFFF', borderColor: '#FFFFFF', center: centreOf(part), fontSize: 32, rounded: false, width: .25, height: .25, text: part.value }));
+  each('sandwichsum', part => overlays.push({ sandwich: true, backgroundColor: '#FFFFFF', borderColor: '#FFFFFF', center: centreOf(part), fontSize: 32, rounded: false, width: .25, height: .25, text: part.value }));
   each('littlekillersum', part => {
     const rc = fRC(part.cell), dir = KILLER_DIR[String(part.direction)];
     if (!rc || !dir) return;

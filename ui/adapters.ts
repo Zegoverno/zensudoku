@@ -58,7 +58,7 @@ export function sourceStorage(key: string = SOURCES_KEY): SourceStore {
 }
 
 /** One line of the library picker. `puzzleId` is the game's id; `id` the library's (or the import's). */
-export interface LibraryItem { puzzleId: string; id: string; collection?: string; number?: string; title?: string; author?: string }
+export interface LibraryItem extends LibraryInfo { puzzleId: string }
 /** What the picker lists: the local library (`available`) or, without one, the imported puzzles. */
 export interface LibraryList { available: boolean; entries: LibraryItem[]; errors: number }
 /** Where the picker gets its list and a puzzle's source: the plugin's server, or the browser's imports. */

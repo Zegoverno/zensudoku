@@ -26,7 +26,7 @@ Click or tap a cell, then the pad, or use the keyboard:
 | v, c, m | Value, Corner, Center mode |
 | Delete, Backspace, 0 | erase: the value, then the notes, then the color |
 | Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y | undo, redo |
-| l | the Library (standalone; inside zenbot it is the Library command) |
+| l | the puzzle picker |
 
 Placing a digit clears that cell's notes. With **Auto-clear notes** on (the default),
 it also removes that digit from corner and center notes in the same row, column or region.
@@ -63,18 +63,20 @@ and **Watch the solution** when the puzzle names a video. What zensudoku checks:
 - with no drawing beyond regions and shading, and the classic rules leaving only a few solutions (a "pick your
   difficulty" cell, say), any full board without repeats is solved, and **Hint** works as on a classic puzzle;
 - otherwise a full board without repeats says *Board full, no repeats. The variant rules can't be checked here:
-  compare with the solution video.* zensudoku does not read rules text, so it has no hints for these.
+  compare with the solution video.* zensudoku does not enforce free-text variant rules, so it has no solving hints for these.
 
-In the PWA, **Import a SudokuPad puzzle** takes a source, keeps it on this device and lists it in the Library.
+In the PWA, **Import a SudokuPad puzzle** takes a source, keeps it on this device and lists it under **Puzzles**.
 
 ## The local library
 
-In zenbot, the **Library** button (or `l`) lists the puzzles in the plugin's data folder, `$ZEN_PLUGIN_DATA/library/`
+**Puzzles** (or `l`) brings together built-ins, entered/imported puzzles, and in zenbot the plugin's local data folder, `$ZEN_PLUGIN_DATA/library/`
 (for zenbot, `~/.zenbot/plugin-data/zensudoku/library/`), grouped by collection, searchable by number, title or
-author, with ✓ for solved and • for started on this device. Put each puzzle in any subfolder as
+author or tag, with ✓ for solved and • for started on this device. Put each puzzle in any subfolder as
 
 - `<name>.json`: `{"id": "…", "source": "…", "collection": "…", "number": "…", "title": "…", "author": "…", "video": "https://…", "link": "https://…"}`;
-  only `id` (letters, digits, `.`, `_`, `-`) and `source` are required; or
+  only `id` (letters, digits, `.`, `_`, `-`) and `source` are required. Optional filters use `difficulty`
+  (`easy`, `medium`, `hard`) and `variants` (e.g. `["killer", "sandwich"]`). Optional `tags` are searchable.
+  Missing or unrecognized metadata is unclassified; or
 - `<name>.txt`: just a source; its id is the file name.
 
 The list is sorted by collection, then number (or title), in natural order. Dot files are skipped; a file that
@@ -115,7 +117,7 @@ The board follows zenbot's host (MCP Apps host context), live:
   beside its controls; a phone (390 px) or a narrow side panel gets one column with the board as wide as
   the container allows, and never a sideways scroll.
 - **Keyboard**: the board takes part in zenbot's keyboard model (zenbot's `PLUGINS.md`, "Keys and commands"). It declares
-  New game (`n`), Restart, Hint (`h`), Undo (`Mod+z`), Redo (`Mod+Shift+z`), Toggle notes and Library (`l`), which show in zenbot's
+  New game (`n`), Restart, Hint (`h`), Undo (`Mod+z`), Redo (`Mod+Shift+z`), Toggle notes and Puzzles (`l`), which show in zenbot's
   ring and command list (a command that cannot run now is left out). Inside zenbot those keys are forwarded and zenbot
   sends the command back, so the owner can rebind them; the board keeps arrows, digits, `v`/`c`/`m`, Delete and Ctrl+Y.
   Every other keydown goes to zenbot (only Ctrl/Meta ones from the puzzle text box), and the board takes the focus when its panel does.
@@ -195,10 +197,13 @@ small puzzles written for them.
 
 ## Sudoku helper
 
-In zenbot, open **Sudoku helper** in the side panel alongside the game. It shows the
-current puzzle's rules and updates as you select cells with the keyboard or by tapping.
-In the PWA and other MCP hosts, the calculators are under **Sudoku helper** on the board;
-the puzzle rules are shown above the grid.
+Hover, keyboard-focus, or tap a numbered killer cage or recognized sandwich clue on the board for
+its digit combinations. Built-in sandwich clues and explicitly typed f-puzzles clues are recognized.
+SudokuPad artwork is only recognized when an explicit, unambiguous outside-clue rule and the clue
+position identify a sandwich sum. Other outside numbers remain ordinary artwork.
+
+Open the collapsible **Sudoku helper** inside the game for the full calculators. It sits beside the
+board on a wide screen and below it on a phone. The standalone zenbot helper view still works.
 
 - **Selected cage:** a numbered cage shows every distinct-digit set for its sum and size.
   Sets that cannot contain the digits already entered in the cage are greyed out and crossed

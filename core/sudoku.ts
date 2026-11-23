@@ -59,7 +59,7 @@ export interface Puzzle extends Rules {
   library?: LibraryInfo;
 }
 /** What the local library says about a puzzle (core/library.ts reads it). */
-export interface LibraryInfo { id: string; collection?: string; number?: string; title?: string; author?: string; video?: string }
+export interface LibraryInfo { id: string; collection?: string; number?: string; title?: string; author?: string; video?: string; difficulty?: Difficulty; variants?: readonly Variant[]; tags?: readonly string[] }
 
 const NO_LINES: (number | null)[] = Array(9).fill(null);
 export const CLASSIC: Rules = { variant: 'classic', cages: [], thermometers: [], rowSandwich: NO_LINES, colSandwich: NO_LINES, consecutive: [] };
