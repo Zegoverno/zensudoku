@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { CATALOG } from './sudoku.ts';
 import type { Puzzle } from './sudoku.ts';
 import { seedId as legacyId, seedPuzzle as legacyPuzzle, transformed as puzzle } from './__tests__/fixtures.ts';
-import { MAX_HISTORY, STORAGE_KEY, seenBy, setAutoClear, blankBoard, boardOf, choose, enter, erase, isDone, load, newGame, next, notesOf, peekBoard, place, puzzleOf, redo, reset, restore, select, serialize, setColor, setFilters, toggleNote, undo } from './sudoku-game.ts';
+import { MAX_HISTORY, STORAGE_KEY, addToSelection, effectiveMode, hasNoteOnAll, selectAll, toggleSelection, seenBy, setAutoClear, blankBoard, boardOf, choose, enter, erase, isDone, load, newGame, next, notesOf, peekBoard, place, puzzleOf, redo, reset, restore, select, serialize, setColor, setFilters, toggleNote, undo } from './sudoku-game.ts';
 import type { Game } from './sudoku-game.ts';
 
 /** A game on an entered puzzle (a transformed copy of the example), so the catalog may grow freely. */
@@ -202,7 +202,7 @@ describe('undo and redo', () => {
     const g = fresh(), i = emptyCell(g), j = emptyCell(g, 2);
     at(g, i); place(g, 1); toggleNote(g, 'corner', 3); at(g, j); toggleNote(g, 'center', 5); setColor(g, 2);
     expect(reset(g)).toBe(true);
-    expect(boardOf(g)).toEqual({ ...blankBoard(puzzleOf(g)), selected: boardOf(g).selected });
+    expect(boardOf(g)).toEqual({ ...blankBoard(puzzleOf(g)), selected: boardOf(g).selected, selection: boardOf(g).selection });
     expect(undo(g)).toBe(true);
     expect(boardOf(g).cells[i]).toBe(1);
     expect(notesOf(boardOf(g).center[j])).toEqual([5]);
@@ -222,6 +222,123 @@ describe('undo and redo', () => {
     expect(undo(g)).toBe(false);
     choose(g, legacyId(1));
     expect(undo(g)).toBe(true);
+  });
+});
+
+describe('selecting several cells', () => {
+  /** A game with the first three empty cells selected (cursor on the last). */
+  const three = () => { const g = fresh(), [a, b, c] = [0, 1, 2].map(k => emptyCell(g, k)); at(g, a); addToSelection(g, b); addToSelection(g, c); return { g, a, b, c }; };
+  it('adds cells to the selection, keeps the cursor among them, and a plain select collapses it', () => {
+    const { g, a, b, c } = three(), bd = boardOf(g);
+    expect(bd.selection).toEqual([a, b, c]); expect(bd.selected).toBe(c);
+    expect(addToSelection(g, c)).toBe(false);                        // already the cursor: nothing changed
+    expect(addToSelection(g, a)).toBe(true);                         // an old member becomes the cursor
+    expect(bd.selected).toBe(a); expect(bd.selection).toEqual([a, b, c]);
+    expect(addToSelection(g, 9999)).toBe(false);
+    select(g, b);
+    expect(bd.selection).toEqual([b]);
+  });
+  it('toggles a cell off and back on, but never empties the selection', () => {
+    const { g, a, b, c } = three(), bd = boardOf(g);
+    expect(toggleSelection(g, b)).toBe(true);
+    expect(bd.selection).toEqual([a, c]); expect(bd.selected).toBe(c);
+    expect(toggleSelection(g, b)).toBe(true);
+    expect(bd.selection).toEqual([a, c, b]); expect(bd.selected).toBe(b);
+    select(g, a); toggleSelection(g, a);
+    expect(bd.selection).toEqual([a]);
+  });
+  it('selects every empty non-given cell, moving the cursor into them', () => {
+    const g = fresh(), p = puzzleOf(g), bd = boardOf(g);
+    at(g, givenCell(g));
+    expect(selectAll(g)).toBe(true);
+    const empties = bd.cells.flatMap((n, i) => (n ? [] : [i]));
+    expect(bd.selection).toEqual(empties);
+    expect(bd.selection.some(i => p.givens[i])).toBe(false);
+    expect(empties).toContain(bd.selected);
+  });
+  it('writes corner marks from Value mode without changing the saved mode', () => {
+    const { g, a, b, c } = three();
+    expect(g.mode).toBe('value'); expect(effectiveMode(g)).toBe('corner');
+    expect(enter(g, 4)).toBe(true);
+    for (const i of [a, b, c]) { expect(boardOf(g).cells[i]).toBe(0); expect(notesOf(boardOf(g).corner[i])).toEqual([4]); }
+    expect(g.mode).toBe('value');
+    select(g, a);
+    expect(effectiveMode(g)).toBe('value');
+    expect(enter(g, 5)).toBe(true);                                  // one cell: a value as before
+    expect(boardOf(g).cells[a]).toBe(5);
+    g.mode = 'center'; addToSelection(g, b);
+    expect(effectiveMode(g)).toBe('center');                         // an explicit mode is kept
+  });
+  it('toggles a note across the selection: all have it → remove from all, else add to all', () => {
+    const { g, a, b, c } = three(), bd = boardOf(g);
+    select(g, a); toggleNote(g, 'corner', 3); addToSelection(g, b); addToSelection(g, c);
+    expect(hasNoteOnAll(g, 'corner', 3)).toBe(false);
+    toggleNote(g, 'corner', 3);
+    expect([a, b, c].map(i => bd.corner[i])).toEqual([4, 4, 4]);     // one had it; now all do
+    expect(hasNoteOnAll(g, 'corner', 3)).toBe(true);
+    toggleNote(g, 'corner', 3);
+    expect([a, b, c].map(i => bd.corner[i])).toEqual([0, 0, 0]);
+    toggleNote(g, 'center', 6);
+    expect([a, b, c].map(i => bd.center[i])).toEqual([32, 32, 32]);
+  });
+  it('skips givens and filled cells when writing notes', () => {
+    const g = fresh(), a = emptyCell(g), b = emptyCell(g, 1), gv = givenCell(g), bd = boardOf(g);
+    at(g, b); place(g, 7); at(g, a); addToSelection(g, b); addToSelection(g, gv);
+    expect(toggleNote(g, 'corner', 2)).toBe(true);
+    expect(bd.corner[a]).toBe(2); expect(bd.corner[b]).toBe(0); expect(bd.corner[gv]).toBe(0);
+    select(g, gv); addToSelection(g, b);
+    expect(toggleNote(g, 'corner', 2)).toBe(false);                  // nothing eligible
+  });
+  it('erases each selected cell by the single-cell rule, in one step', () => {
+    const { g, a, b, c } = three(), bd = boardOf(g);
+    select(g, a); place(g, 6); select(g, b); toggleNote(g, 'corner', 2); select(g, c); setColor(g, 3);
+    select(g, a); addToSelection(g, b); addToSelection(g, c);
+    const steps = g.history[g.puzzleId].undo.length;
+    expect(erase(g)).toBe(true);
+    expect(bd.cells[a]).toBe(0); expect(bd.corner[b]).toBe(0); expect(bd.colors[c]).toBe(0);
+    expect(g.history[g.puzzleId].undo.length).toBe(steps + 1);
+    undo(g);
+    expect(bd.cells[a]).toBe(6); expect(bd.corner[b]).toBe(2); expect(bd.colors[c]).toBe(3);
+  });
+  it('colors the selection, and clears the color when all of it already has that color', () => {
+    const { g, a, b, c } = three(), bd = boardOf(g), gv = givenCell(g);
+    addToSelection(g, gv);                                           // givens take colors too
+    setColor(g, 2);
+    expect([a, b, c, gv].map(i => bd.colors[i])).toEqual([2, 2, 2, 2]);
+    setColor(g, 2);
+    expect([a, b, c, gv].map(i => bd.colors[i])).toEqual([0, 0, 0, 0]);
+    select(g, a); setColor(g, 2); addToSelection(g, b);
+    setColor(g, 2);                                                  // only one had it: set on all
+    expect([bd.colors[a], bd.colors[b]]).toEqual([2, 2]);
+    setColor(g, 4);
+    expect([bd.colors[a], bd.colors[b]]).toEqual([4, 4]);
+  });
+  it('undoes and redoes a whole selection edit in one step', () => {
+    const { g, a, b, c } = three(), bd = boardOf(g);
+    toggleNote(g, 'corner', 1);
+    expect(g.history[g.puzzleId].undo.length).toBe(1);
+    expect(undo(g)).toBe(true);
+    expect([a, b, c].map(i => bd.corner[i])).toEqual([0, 0, 0]);
+    expect(bd.selection).toEqual([bd.selected]);                     // undo returns to a single cell
+    expect(redo(g)).toBe(true);
+    expect([a, b, c].map(i => bd.corner[i])).toEqual([1, 1, 1]);
+    expect(undo(g)).toBe(true); expect(undo(g)).toBe(false);
+  });
+  it('saves the selection and restores it; old saves without one restore with the cursor alone', () => {
+    const { g, a, b, c } = three();
+    const back = restore(serialize(g))!, bd = boardOf(back);
+    expect(bd.selection).toEqual([a, b, c]); expect(bd.selected).toBe(c);
+    const old = JSON.parse(serialize(g));
+    for (const x of Object.values<any>(old.boards)) delete x.selection;
+    const legacy = boardOf(restore(JSON.stringify(old))!);
+    expect(legacy.selection).toEqual([c]); expect(legacy.selected).toBe(c);
+  });
+  it('trims a bad saved selection: junk, repeats, inactive cells and a missing cursor', () => {
+    const { g, a, b, c } = three(), raw = JSON.parse(serialize(g)), board: any = Object.values(raw.boards)[0];
+    board.selection = [a, a, b, -1, 1e9, 'x', 1.5, null, b];
+    expect(boardOf(restore(JSON.stringify(raw))!).selection).toEqual([c, a, b]);   // the cursor always leads
+    board.selection = 'all';
+    expect(boardOf(restore(JSON.stringify(raw))!).selection).toEqual([c]);
   });
 });
 

@@ -1,6 +1,9 @@
 // A Sudoku game's state and what the player can do to it: values, corner and center notes, colors,
 // undo/redo and per-puzzle progress; plus saving and validated restore. Pure functions over a
 // plain object (ui/state.svelte.ts makes it reactive), so tests need no DOM.
+// Selection follows SudokuPad: `selected` is the cursor (peer highlighting, single-cell edits) and `selection`
+// the cells every action applies to; it always holds the cursor. With more than one cell selected a digit in
+// Value mode writes corner marks instead (the saved mode is untouched). Each action is one undo step.
 import { CATALOG, playVerdict, filtered, findPuzzle, nextPuzzle, DIFFICULTIES, VARIANTS } from './sudoku.ts';
 import { finishAttempt, newPlayTime, restorePlayTime } from './play-time.ts';
 import type { PlayTime } from './play-time.ts';
@@ -13,8 +16,9 @@ export const COLORS = ['Red', 'Orange', 'Yellow', 'Green', 'Blue', 'Purple'] as 
 export const MAX_HISTORY = 500;
 const MAX_BOARDS = 500;
 
-/** A bit per number 1–9 (bit n−1) in `corner` and `center`; `colors` 0 is none, 1–6 index COLORS. */
-export interface Board { cells: number[]; corner: number[]; center: number[]; colors: number[]; selected: number; play: PlayTime }
+/** A bit per number 1–9 (bit n−1) in `corner` and `center`; `colors` 0 is none, 1–6 index COLORS.
+ *  `selection` lists the selected cells, `selected` (the cursor) among them. */
+export interface Board { cells: number[]; corner: number[]; center: number[]; colors: number[]; selected: number; selection: number[]; play: PlayTime }
 export interface CellState { v: number; c: number; m: number; k: number }
 export interface Edit { i: number; before: CellState; after: CellState }
 export interface History { undo: Edit[][]; redo: Edit[][] }
@@ -35,9 +39,10 @@ export const bit = (n: number) => 1 << (n - 1);
 export const notesOf = (mask: number): number[] => [1, 2, 3, 4, 5, 6, 7, 8, 9].filter(n => mask & bit(n));
 
 export function blankBoard(p: Puzzle): Board {
-  return { cells: [...p.givens], corner: Array(sizeOf(p)).fill(0), center: Array(sizeOf(p)).fill(0), colors: Array(sizeOf(p)).fill(0), selected: activeCells(p)[0] ?? 0, play: newPlayTime() };
+  const selected = activeCells(p)[0] ?? 0;
+  return { cells: [...p.givens], corner: Array(sizeOf(p)).fill(0), center: Array(sizeOf(p)).fill(0), colors: Array(sizeOf(p)).fill(0), selected, selection: [selected], play: newPlayTime() };
 }
-const isBlank = (b: Omit<Board, 'play'>, p: Puzzle) => b.cells.every((n, i) => n === p.givens[i]) && !b.corner.some(Boolean) && !b.center.some(Boolean) && !b.colors.some(Boolean);
+const isBlank = (b: Pick<Board, 'cells' | 'corner' | 'center' | 'colors'>, p: Puzzle) => b.cells.every((n, i) => n === p.givens[i]) && !b.corner.some(Boolean) && !b.center.some(Boolean) && !b.colors.some(Boolean);
 
 export function newGame(p: Puzzle = CATALOG[0]): Game {
   return { puzzleId: p.id, mode: 'value', variant: 'all', difficulty: 'all', autoClear: true, boards: { [p.id]: blankBoard(p) }, history: {} };
@@ -90,10 +95,48 @@ function commit(g: Game, changes: { i: number; to: Partial<CellState> }[]): bool
   return true;
 }
 
+/** Selects only cell `i`. */
 export function select(g: Game, i: number): boolean {
   if (!isActive(puzzleOf(g), i)) return false;
-  boardOf(g).selected = i;
+  const b = boardOf(g);
+  b.selected = i; b.selection = [i];
   return true;
+}
+/** Adds cell `i` to the selection and moves the cursor there; false when nothing changed. */
+export function addToSelection(g: Game, i: number): boolean {
+  const b = boardOf(g);
+  if (!isActive(puzzleOf(g), i) || (b.selected === i && b.selection.includes(i))) return false;
+  if (!b.selection.includes(i)) b.selection.push(i);
+  b.selected = i;
+  return true;
+}
+/** Ctrl/Cmd+click: drops a selected cell (the cursor moves to the last one left; the last cell stays), else adds it. */
+export function toggleSelection(g: Game, i: number): boolean {
+  const b = boardOf(g);
+  if (!b.selection.includes(i) || b.selection.length === 1) return addToSelection(g, i);
+  b.selection = b.selection.filter(j => j !== i);
+  b.selected = b.selection[b.selection.length - 1];
+  return true;
+}
+/** Every empty, non-given cell (Ctrl+A); the cursor moves to the first one unless it is among them. False when there are none. */
+export function selectAll(g: Game): boolean {
+  const p = puzzleOf(g), b = boardOf(g), all = activeCells(p).filter(i => !p.givens[i] && !b.cells[i]);
+  if (!all.length) return false;
+  b.selection = all;
+  if (!all.includes(b.selected)) b.selected = all[0];
+  return true;
+}
+/** Value mode becomes Corner while several cells are selected; the saved `mode` is not touched. */
+export function effectiveMode(g: Game): Mode { return g.mode === 'value' && peekBoard(g).selection.length > 1 ? 'corner' : g.mode; }
+/** The selected cells that take notes: empty and not given (nothing once the board is done). */
+export function noteCells(g: Game): number[] {
+  const p = puzzleOf(g), b = peekBoard(g);
+  return isDone(g) ? [] : b.selection.filter(i => !p.givens[i] && !b.cells[i]);
+}
+/** Whether every note-taking selected cell has note `n` of this kind (what the number pad shows as on). */
+export function hasNoteOnAll(g: Game, kind: 'corner' | 'center', n: number): boolean {
+  const b = peekBoard(g), cells = noteCells(g);
+  return cells.length > 0 && cells.every(i => ((kind === 'corner' ? b.corner : b.center)[i] & bit(n)) !== 0);
 }
 const editable = (g: Game) => { const p = puzzleOf(g), b = boardOf(g); return !p.givens[b.selected] && !isDone(g); };
 
@@ -117,30 +160,35 @@ export function place(g: Game, n: number): boolean {
 }
 /** Turns clearing notes on placement on or off. */
 export function setAutoClear(g: Game, on: boolean): void { g.autoClear = on; }
-/** Adds or removes a note; only an empty, non-given cell takes notes. */
+/** Toggles a note across the selection: when every empty, non-given selected cell has it, it leaves them all; else it goes on all. */
 export function toggleNote(g: Game, kind: 'corner' | 'center', n: number): boolean {
-  const b = boardOf(g);
-  if (!(Number.isInteger(n) && n >= 1 && n <= digitsOf(puzzleOf(g))) || !editable(g) || b.cells[b.selected]) return false;
-  const mask = kind === 'corner' ? b.corner[b.selected] : b.center[b.selected];
-  return commit(g, [{ i: b.selected, to: kind === 'corner' ? { c: mask ^ bit(n) } : { m: mask ^ bit(n) } }]);
+  if (!(Number.isInteger(n) && n >= 1 && n <= digitsOf(puzzleOf(g)))) return false;
+  const b = boardOf(g), cells = noteCells(g), off = hasNoteOnAll(g, kind, n);
+  return commit(g, cells.map(i => {
+    const mask = kind === 'corner' ? b.corner[i] : b.center[i], next = off ? mask & ~bit(n) : mask | bit(n);
+    return { i, to: kind === 'corner' ? { c: next } : { m: next } };
+  }));
 }
-/** Enters `n` in the current mode. */
+/** Enters `n` in the effective mode: a value in the cursor cell, or a note across the selection. */
 export function enter(g: Game, n: number): boolean {
-  return g.mode === 'value' ? place(g, n) : toggleNote(g, g.mode, n);
+  const mode = effectiveMode(g);
+  return mode === 'value' ? place(g, n) : toggleNote(g, mode, n);
 }
-/** Clears the value; with none, the notes; with none, the color. A given only loses its color. */
+/** Per selected cell: clears the value; with none, the notes; with none, the color. A given only loses its color. */
 export function erase(g: Game): boolean {
-  const p = puzzleOf(g), b = boardOf(g), i = b.selected, s = cellState(b, i);
-  if (p.givens[i]) return commit(g, [{ i, to: { k: 0 } }]);
-  if (isDone(g)) return false;
-  if (s.v) return commit(g, [{ i, to: { v: 0 } }]);
-  if (s.c || s.m) return commit(g, [{ i, to: { c: 0, m: 0 } }]);
-  return commit(g, [{ i, to: { k: 0 } }]);
+  const p = puzzleOf(g), b = boardOf(g), done = isDone(g);
+  return commit(g, b.selection.flatMap((i): { i: number; to: Partial<CellState> }[] => {
+    const s = cellState(b, i);
+    if (p.givens[i]) return [{ i, to: { k: 0 } }];
+    if (done) return [];
+    return [{ i, to: s.v ? { v: 0 } : s.c || s.m ? { c: 0, m: 0 } : { k: 0 } }];
+  }));
 }
+/** Colors the selection; when every selected cell already has color `k` it is cleared from them all. 0 clears. */
 export function setColor(g: Game, k: number): boolean {
   if (!Number.isInteger(k) || k < 0 || k > COLORS.length) return false;
-  const b = boardOf(g);
-  return commit(g, [{ i: b.selected, to: { k: b.colors[b.selected] === k ? 0 : k } }]);
+  const b = boardOf(g), off = b.selection.every(i => b.colors[i] === k);
+  return commit(g, b.selection.map(i => ({ i, to: { k: off ? 0 : k } })));
 }
 /** Back to the givens: no entries, notes or colors (one undo brings them back). */
 export function reset(g: Game): boolean {
@@ -152,7 +200,7 @@ export function undo(g: Game): boolean {
   if (!step) return false;
   for (const e of [...step].reverse()) write(b, e.i, e.before);
   h.redo.push(step);
-  b.selected = step[0].i;
+  b.selected = step[0].i; b.selection = [b.selected];
   return true;
 }
 export function redo(g: Game): boolean {
@@ -160,7 +208,7 @@ export function redo(g: Game): boolean {
   if (!step) return false;
   for (const e of step) write(b, e.i, e.after);
   h.undo.push(step);
-  b.selected = step[0].i;
+  b.selected = step[0].i; b.selection = [b.selected];
   return true;
 }
 
@@ -208,7 +256,11 @@ function validBoard(x: any, p: Puzzle): Board | null {
     if (p.givens[i] && x.cells[i] !== p.givens[i]) return null;
     if (x.cells[i] && (x.corner[i] || x.center[i])) return null;
   }
-  const b = { cells: [...x.cells], corner: [...x.corner], center: [...x.center], colors: [...x.colors], selected: x.selected };
+  // An old save has no selection; a bad one is trimmed to active, distinct cells, and always holds the cursor.
+  const picked: unknown[] = Array.isArray(x.selection) ? x.selection.slice(0, sizeOf(p)) : [];
+  const selection = [...new Set(picked.filter((i): i is number => Number.isInteger(i) && isActive(p, i as number)))];
+  if (!selection.includes(x.selected)) selection.unshift(x.selected);
+  const b = { cells: [...x.cells], corner: [...x.corner], center: [...x.center], colors: [...x.colors], selected: x.selected, selection };
   return { ...b, play: restorePlayTime(x.play, !isBlank(b, p), playVerdict(b.cells, p) === 'solved') };
 }
 

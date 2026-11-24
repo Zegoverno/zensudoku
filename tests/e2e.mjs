@@ -170,6 +170,39 @@ try {
   assert.equal(await at.getAttribute('data-value'), sol);
   assert.equal(await at.getAttribute('data-corner'), '', 'placing a number clears its notes');
 
+  // several cells: Shift+Arrow adds a cell, a digit in Value mode writes corner marks in both (one undo step), Esc collapses
+  const pair = [...catalog.givens].findIndex((g, i) => i % 9 < 8 && g === '0' && catalog.givens[i + 1] === '0' && i !== cell && i + 1 !== cell);
+  const [c1, c2] = [pair, pair + 1].map(i => page.locator(`[data-cell="${i}"]`));
+  await c1.click();
+  await page.keyboard.press('Shift+ArrowRight');
+  assert.equal(await page.locator('.grid .selected').count(), 2, 'Shift+Arrow adds the next cell');
+  await page.keyboard.press('Shift');
+  assert.equal(await page.locator('.grid .selected').count(), 2, 'the selection outlives the Shift key');
+  assert.equal(await page.getByRole('button', { name: 'Corner (auto)' }).getAttribute('aria-pressed'), 'true');
+  await page.keyboard.press('4');
+  assert.equal(await c1.getAttribute('data-value'), ''); assert.equal(await c1.getAttribute('data-corner'), '4');
+  assert.equal(await c2.getAttribute('data-corner'), '4');
+  await page.keyboard.press('4');
+  assert.equal(await c1.getAttribute('data-corner') + await c2.getAttribute('data-corner'), '', 'the same note again takes it off both');
+  await page.keyboard.press('4');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('.grid .selected').count(), 1, 'Esc collapses to the cursor cell');
+  assert.equal(await c2.getAttribute('class').then(c => c.includes('selected')), true);
+  await page.getByRole('button', { name: 'Undo' }).click();
+  assert.equal(await c1.getAttribute('data-corner') + await c2.getAttribute('data-corner'), '', 'one undo clears both');
+  // Ctrl+A takes the empty cells; a mouse drag selects what it crosses and Shift+click adds
+  await page.keyboard.press('Control+a');
+  assert.equal(await page.locator('.grid .selected').count(), await page.locator('.grid button:not(.given)[data-value=""]').count());
+  await c1.click();
+  const [b1, b2] = [await c1.boundingBox(), await c2.boundingBox()];
+  await page.mouse.move(b1.x + b1.width / 2, b1.y + b1.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b2.x + b2.width / 2, b2.y + b2.height / 2, { steps: 4 });
+  await page.mouse.up();
+  assert.equal(await page.locator('.grid .selected').count(), 2, 'dragging selects both cells');
+  await c1.click();
+  assert.equal(await page.locator('.grid .selected').count(), 1, 'a plain tap selects one cell');
+
   await clear.uncheck();
   // progress and the setting survive a reload
   await page.reload();

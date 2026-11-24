@@ -22,10 +22,18 @@ Click or tap a cell, then the pad, or use the keyboard:
 | arrows | move |
 | 1–9 | place a digit (or a note, in Corner or Center mode) |
 | Shift+1–9 | corner note |
+| Shift+arrows, Shift+click, Ctrl/Cmd+click, drag | select several cells (a drag with Shift or Ctrl adds to the selection) |
+| Ctrl+A | select every empty cell |
+| Esc | back to one selected cell |
 | v, c, m | Value, Corner, Center mode |
 | Delete, Backspace, 0 | erase: the value, then the notes, then the color |
 | Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y | undo, redo |
 | l | the puzzle picker |
+
+With several cells selected, a digit in Value mode writes corner notes instead (the Corner button shows
+"Corner (auto)"; your chosen mode is kept). A note goes on every selected empty cell, or comes off them all
+when each already has it; Delete and colors act on the whole selection. Each is one undo step, and
+the selection is saved with the board.
 
 Placing a digit clears that cell's notes. With **Auto-clear notes** on (the default),
 it also removes that digit from corner and center notes in the same row, column or region.
