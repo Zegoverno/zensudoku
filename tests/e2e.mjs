@@ -186,6 +186,8 @@ try {
   assert.equal(await c1.getAttribute('data-corner') + await c2.getAttribute('data-corner'), '', 'the same note again takes it off both');
   await page.keyboard.press('4');
   await shot(page, 'multi-select');
+  const tints = await page.$$eval('.grid .selected', els => els.map(e => getComputedStyle(e).backgroundColor));
+  assert.equal(new Set(tints).size, 1, 'a hovered selected cell keeps the selection tint');
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('.grid .selected').count(), 1, 'Esc collapses to the cursor cell');
   assert.equal(await c2.getAttribute('class').then(c => c.includes('selected')), true);
@@ -462,7 +464,7 @@ try {
   assert.match((await style('body')).font, /Georgia/);
   assert.match(await ui.locator('textarea').evaluate(el => getComputedStyle(el).fontFamily), /Courier/);
   await ui.locator('[data-cell]:not(.given)').first().click();
-  assert.equal(await ui.locator('.grid .selected').first().evaluate(el => getComputedStyle(el).boxShadow), 'rgb(61, 107, 58) 0px 0px 0px 2px inset');
+  assert.equal(await ui.locator('.grid .selected').first().evaluate(el => getComputedStyle(el).boxShadow), 'rgb(61, 107, 58) 0px 0px 0px 3px inset');
   // the theme follows the host live, both ways
   await hostPage.evaluate(() => window.setContext({ theme: 'light' }));
   await ui.locator('html[data-theme="light"]').waitFor();

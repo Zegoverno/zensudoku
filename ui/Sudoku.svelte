@@ -605,11 +605,11 @@
   .grid .chess { background: color-mix(in srgb, var(--chess, #d08a1e) 22%, transparent); }
   .grid .matching { background: color-mix(in srgb, var(--accent) 18%, transparent); }
   .grid, .grid button { touch-action: none; user-select: none; -webkit-user-select: none; }
-  .grid .selected { background: color-mix(in srgb, var(--accent) 28%, transparent); box-shadow: inset 0 0 0 1px var(--accent); }
-  .grid .selected.cursor { box-shadow: inset 0 0 0 2px var(--accent); }
+  .grid button.selected { background: color-mix(in srgb, var(--accent) 42%, transparent); box-shadow: inset 0 0 0 2px var(--accent); }
+  .grid .selected.cursor { box-shadow: inset 0 0 0 3px var(--accent); }
   .grid .conflict .v { color: var(--err); text-decoration: underline wavy; }
   .grid .conflict { box-shadow: inset 0 0 0 1px var(--err); }
-  .grid .selected.cursor.conflict { box-shadow: inset 0 0 0 2px var(--accent); }
+  .grid .selected.cursor.conflict { box-shadow: inset 0 0 0 3px var(--accent); }
   .grid .right { border-right: 2px solid var(--ink); }
   .grid .bottom { border-bottom: 2px solid var(--ink); }
   .mark { position: absolute; inset: 0; opacity: .38; pointer-events: none; }
