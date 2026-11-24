@@ -363,12 +363,19 @@ try {
   await p2.goto(base);
   await p2.waitForSelector('.grid');
   await p2.evaluate(() => window.timerAdvance(12_000));
+  const lastEmpty = catalog.givens.lastIndexOf('0');
   for (let i = 0; i < 81; i++) {
     if (catalog.givens[i] !== '0') continue;
     await p2.locator(`[data-cell="${i}"]`).click();
+    if (i === lastEmpty) {
+      assert.equal(await p2.locator('.digits button.done').count(), 8, 'eight digits used up before the last cell');
+      assert.equal(await p2.locator(`.digits button:nth-child(${catalog.solution[i]})`).getAttribute('class').then(c => c.includes('done')), false);
+      await shot(p2, 'pwa-digits-done');
+    }
     await p2.keyboard.press(catalog.solution[i]);
   }
   assert.match(await p2.locator('.progress [role=status]').textContent(), /Puzzle complete/);
+  assert.equal(await p2.locator('.digits button.done').count(), 9, 'every digit is used up on a solved board');
   await shot(p2, 'pwa-solved');
   const elapsed = p2.getByTestId('elapsed'), best = p2.getByTestId('best');
   assert.equal(await elapsed.textContent(), '0:12');
