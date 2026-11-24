@@ -185,6 +185,7 @@ try {
   await page.keyboard.press('4');
   assert.equal(await c1.getAttribute('data-corner') + await c2.getAttribute('data-corner'), '', 'the same note again takes it off both');
   await page.keyboard.press('4');
+  await shot(page, 'multi-select');
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('.grid .selected').count(), 1, 'Esc collapses to the cursor cell');
   assert.equal(await c2.getAttribute('class').then(c => c.includes('selected')), true);

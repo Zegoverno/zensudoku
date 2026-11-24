@@ -319,7 +319,7 @@ describe('selecting several cells', () => {
     expect(g.history[g.puzzleId].undo.length).toBe(1);
     expect(undo(g)).toBe(true);
     expect([a, b, c].map(i => bd.corner[i])).toEqual([0, 0, 0]);
-    expect(bd.selection).toEqual([bd.selected]);                     // undo returns to a single cell
+    expect(bd.selection).toEqual([a, b, c]);                         // undo keeps a multi-cell selection
     expect(redo(g)).toBe(true);
     expect([a, b, c].map(i => bd.corner[i])).toEqual([1, 1, 1]);
     expect(undo(g)).toBe(true); expect(undo(g)).toBe(false);

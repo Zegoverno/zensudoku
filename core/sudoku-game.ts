@@ -200,7 +200,7 @@ export function undo(g: Game): boolean {
   if (!step) return false;
   for (const e of [...step].reverse()) write(b, e.i, e.before);
   h.redo.push(step);
-  b.selected = step[0].i; b.selection = [b.selected];
+  if (b.selection.length < 2) { b.selected = step[0].i; b.selection = [b.selected]; }
   return true;
 }
 export function redo(g: Game): boolean {
@@ -208,7 +208,7 @@ export function redo(g: Game): boolean {
   if (!step) return false;
   for (const e of step) write(b, e.i, e.after);
   h.undo.push(step);
-  b.selected = step[0].i; b.selection = [b.selected];
+  if (b.selection.length < 2) { b.selected = step[0].i; b.selection = [b.selected]; }
   return true;
 }
 
