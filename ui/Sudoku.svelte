@@ -49,6 +49,15 @@
   const filled = $derived(board.cells.filter(Boolean).length);
   const width = $derived(widthOf(puzzle));
   const activeCellsList = $derived(activeCells(puzzle));
+  // A digit is used up once it is placed as many times as the grid holds it, with none of them in conflict:
+  // its pad button dims and gets a check (it still works, to fix or note).
+  const usedUp = $derived.by(() => {
+    const per = activeCellsList.length / digitList.length, count = new Map<number, number>(), out = new Set<number>();
+    if (!Number.isInteger(per)) return out;
+    for (const i of activeCellsList) if (board.cells[i]) count.set(board.cells[i], (count.get(board.cells[i]) ?? 0) + (bad.has(i) ? per + 1 : 1));
+    for (const n of digitList) if (count.get(n) === per) out.add(n);
+    return out;
+  });
   const outlinedRegions = $derived(geometryUnits(puzzle).filter(u => u.rule === 'box' || u.rule === 'region').map(u => u.cells));
   const selectedSet = $derived(new Set(board.selection));
   // More than one cell selected: Value mode shows (and acts as) Corner, without changing the saved mode.
@@ -477,6 +486,7 @@
     {#each digitList as n}
       <button aria-label={mode === 'value' ? `Place ${n}` : `${LABEL[mode]} mark ${n}${autoCorner ? ' (auto)' : ''}`}
         class:on={mode !== 'value' && hasNoteOnAll(game, mode, n)}
+        class:done={usedUp.has(n)} title={usedUp.has(n) ? `All ${n}s placed` : undefined}
         onclick={() => act(enter(game, n))}>{n}</button>
     {/each}
   </div>
@@ -630,6 +640,8 @@
   .digits { display: grid; grid-template-columns: repeat(var(--digits, 9), minmax(0, 1fr)); gap: 4px; margin: 6px 0 10px; }
   .digits button { border: 1px solid var(--faint); border-radius: var(--r-md); min-height: 42px; font-size: 20px; padding: 0; background: var(--soft); }
   .digits button.on { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+  .digits button.done { position: relative; color: var(--faint); }
+  .digits button.done::after { content: '✓'; position: absolute; top: 2px; right: 5px; font-size: 11px; color: var(--accent); }
   .colors { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin-bottom: 10px; }
   .colors button { min-height: 32px; border-radius: var(--r-md); border: 1px solid var(--faint); background: color-mix(in srgb, var(--sw) 45%, transparent); }
   .colors button.plain { background: none; color: var(--dim); }
