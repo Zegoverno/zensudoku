@@ -4,7 +4,7 @@
   import type { Snapshot } from './adapters.ts';
   import { CATALOG, CUSTOM_PREFIX, VARIANT_LABEL, VARIANT_RULE, clueList, customPuzzle, filtered, findPuzzle, gridText, hintable, padPuzzle, related, chessRelated, playVerdict, violations } from '../core/sudoku.ts';
   import type { Puzzle } from '../core/sudoku.ts';
-  import { COLORS, MODES, bit, choose, enter, erase, isDone, next, notesOf, peekBoard, puzzleOf, redo, restart, select as selectCell, setAutoClear, setColor, toggleNote, undo } from '../core/sudoku-game.ts';
+  import { COLORS, MODES, addToSelection, choose, effectiveMode, enter, erase, hasNoteOnAll, isDone, next, notesOf, peekBoard, puzzleOf, redo, restart, select as selectCell, selectAll, setAutoClear, setColor, toggleNote, toggleSelection, undo } from '../core/sudoku-game.ts';
   import { formatTime } from '../core/play-time.ts';
   import type { Mode } from '../core/sudoku-game.ts';
   import { hint as nextHint } from '../core/hint.ts';
@@ -50,6 +50,10 @@
   const width = $derived(widthOf(puzzle));
   const activeCellsList = $derived(activeCells(puzzle));
   const outlinedRegions = $derived(geometryUnits(puzzle).filter(u => u.rule === 'box' || u.rule === 'region').map(u => u.cells));
+  const selectedSet = $derived(new Set(board.selection));
+  // More than one cell selected: Value mode shows (and acts as) Corner, without changing the saved mode.
+  const mode = $derived(effectiveMode(game));
+  const autoCorner = $derived(mode !== game.mode);
   const peerSet = $derived(new Set(activeCellsList.filter(i => related(puzzle, board.selected, i))));
   // Cells a knight's or king's move away, on puzzles with that rule: a second, distinct tint.
   const chessSet = $derived(new Set(activeCellsList.filter(i => !peerSet.has(i) && chessRelated(puzzle, board.selected, i))));
@@ -149,6 +153,22 @@
     if (focus) tick().then(() => grid?.querySelector<HTMLButtonElement>(`[data-cell="${i}"]`)?.focus());
   }
   const setMode = (m: Mode) => { game.mode = m; save(); };
+  /** Cell clicks and drags: a plain press selects one cell, Shift adds, Ctrl/Cmd toggles. A drag adds every cell it crosses. */
+  let dragging = $state(false);
+  const cellAt = (e: PointerEvent) => { const c = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>('[data-cell]'); return c ? Number(c.dataset.cell) : -1; };
+  function press(e: PointerEvent, i: number) {
+    if (e.button !== 0) return;
+    dragging = true;
+    const changed = e.shiftKey ? addToSelection(game, i) : e.ctrlKey || e.metaKey ? toggleSelection(game, i) : selectCell(game, i);
+    if (changed) save();
+  }
+  function sweep(e: PointerEvent) {
+    if (!dragging) return;
+    if (e.pointerType === 'mouse' && !e.buttons) { dragging = false; return; }
+    const i = cellAt(e);
+    if (i >= 0 && !selectedSet.has(i) && addToSelection(game, i)) save();
+  }
+  function release() { if (dragging) { dragging = false; focusBoard(); } }
   function open(id: string) { choose(game, id); save(); }
   $effect(() => { puzzle.id; standing; confirming = false; });
   /** Runs a command zenbot picked (or its key): the same actions as the buttons. */
@@ -183,10 +203,15 @@
       return true;
     }
     if (host.zen && (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'y') { act(redo(game)); return true; }
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'a') { act(selectAll(game)); return true; }
     if (e.ctrlKey || e.metaKey || e.altKey) return false;
+    if (e.key === 'Escape' && board.selection.length > 1 && !picking) { select(board.selected, true); return true; }
     const moves: Record<string, [number,number]> = { ArrowLeft: [0,-1], ArrowRight: [0,1], ArrowUp: [-1,0], ArrowDown: [1,0] };
     const digit = /^Digit([1-9])$/.exec(e.code)?.[1];
-    if (e.key in moves) select(moveCell(puzzle, board.selected, ...moves[e.key]), true);
+    if (e.key in moves) {
+      const to = moveCell(puzzle, board.selected, ...moves[e.key]);
+      if (e.shiftKey) { act(addToSelection(game, to)); focusBoard(); } else select(to, true);
+    }
     else if (e.shiftKey && digit) act(toggleNote(game, 'corner', Number(digit)));
     else if (/^[1-9]$/.test(e.key)) act(enter(game, Number(e.key)));
     else if (['Backspace', 'Delete', '0'].includes(e.key)) act(erase(game));
@@ -295,7 +320,8 @@
       data-center={notesOf(board.center[i]).join('')}
       data-color={board.colors[i] || ''}
       class:given={!!puzzle.givens[i]}
-      class:selected={board.selected === i}
+      class:selected={selectedSet.has(i)}
+      class:cursor={board.selected === i}
       class:related={board.selected !== i && peerSet.has(i)}
       class:chess={board.selected !== i && chessSet.has(i)}
       class:matching={!!n && n === board.cells[board.selected]}
@@ -306,8 +332,9 @@
       class:bottom={!sp && puzzle.variant !== 'jigsaw' && puzzle.variant !== 'samurai' && (Math.floor(i / 9) === 2 || Math.floor(i / 9) === 5)}
       tabindex={board.selected === i ? 0 : -1}
       aria-label={cellLabel(i)}
-      aria-pressed={board.selected === i}
-      onclick={() => select(i)}>
+      aria-pressed={selectedSet.has(i)}
+      onpointerdown={e => press(e, i)}
+      onclick={e => { if (!e.detail) select(i); }}>
       {#if board.colors[i]}<i class="mark" style:background={`var(--c${board.colors[i]})`}></i>{/if}
       {#if n}<span class="v">{n}</span>
       {:else}
@@ -322,7 +349,7 @@
     label={`Killer cage sum ${c.sum} in ${c.cells.length} cells`} style={clueTarget(x, y, .49, .43)} />
 {/snippet}
 
-<svelte:window onkeydown={key} bind:innerWidth={viewportWidth} bind:innerHeight={viewportHeight} />
+<svelte:window onkeydown={key} onpointermove={sweep} onpointerup={release} onpointercancel={release} bind:innerWidth={viewportWidth} bind:innerHeight={viewportHeight} />
 <div class="games" bind:this={surface} class:samurai={puzzle.variant === 'samurai'} class:wide class:compact class:phone={host.phone} class:zen={host.zen} style:--side={width} style:--pad={`${pad}px`} style:--board={boardPx ? `${boardPx}px` : null}>
   <div class="top">
   <header>
@@ -444,17 +471,17 @@
   </div>
   <div class="bottom">
   <div class="modes" role="group" aria-label="Entry mode">
-    {#each MODES as m}<button aria-pressed={game.mode === m} onclick={() => setMode(m)}>{LABEL[m]}</button>{/each}
+    {#each MODES as m}<button aria-pressed={mode === m} onclick={() => setMode(m)}>{LABEL[m]}{autoCorner && mode === m ? ' (auto)' : ''}</button>{/each}
   </div>
   <div class="digits" role="group" aria-label="Number pad" style:--digits={digitList.length}>
     {#each digitList as n}
-      <button aria-label={game.mode === 'value' ? `Place ${n}` : `${LABEL[game.mode]} mark ${n}`}
-        class:on={game.mode !== 'value' && !!((game.mode === 'corner' ? board.corner : board.center)[board.selected] & bit(n))}
+      <button aria-label={mode === 'value' ? `Place ${n}` : `${LABEL[mode]} mark ${n}${autoCorner ? ' (auto)' : ''}`}
+        class:on={mode !== 'value' && hasNoteOnAll(game, mode, n)}
         onclick={() => act(enter(game, n))}>{n}</button>
     {/each}
   </div>
   <div class="colors" role="group" aria-label="Cell colors">
-    {#each COLORS as name, k}<button aria-label={`Color ${name}`} aria-pressed={board.colors[board.selected] === k + 1} style:--sw={`var(--c${k + 1})`} onclick={() => act(setColor(game, k + 1))}></button>{/each}
+    {#each COLORS as name, k}<button aria-label={`Color ${name}`} aria-pressed={board.selection.every(i => board.colors[i] === k + 1)} style:--sw={`var(--c${k + 1})`} onclick={() => act(setColor(game, k + 1))}></button>{/each}
     <button class="plain" aria-label="Clear color" onclick={() => act(setColor(game, 0))}>×</button>
   </div>
   <div class="tools">
@@ -493,7 +520,7 @@
       {#each clues as group}<h2>{group.title}</h2><ul>{#each group.items as item}<li>{item}</li>{/each}</ul>{/each}
     </details>
   {/if}
-  <footer><span>{#if !host.phone}Arrows move · 1–9 place or note · Shift+1–9 corner note · v, c, m choose Value, Corner, Center · Delete erases · Ctrl+Z undoes{#if !host.zen} · l opens the puzzle picker{/if}<br />{/if}Restart clears the board and timer, but keeps your best time and solved status.</span></footer>
+  <footer><span>{#if !host.phone}Arrows move · Shift+arrows, Shift+click or drag select several cells (Ctrl+A all empty, Esc one) · 1–9 place or note (corner notes on several cells) · Shift+1–9 corner note · v, c, m choose Value, Corner, Center · Delete erases · Ctrl+Z undoes{#if !host.zen} · l opens the puzzle picker{/if}<br />{/if}Restart clears the board and timer, but keeps your best time and solved status.</span></footer>
   </div>
 </div>
 
@@ -577,10 +604,12 @@
   .grid .related { background: color-mix(in srgb, var(--accent) 12%, transparent); }
   .grid .chess { background: color-mix(in srgb, var(--chess, #d08a1e) 22%, transparent); }
   .grid .matching { background: color-mix(in srgb, var(--accent) 18%, transparent); }
-  .grid .selected { background: color-mix(in srgb, var(--accent) 28%, transparent); box-shadow: inset 0 0 0 2px var(--accent); }
+  .grid, .grid button { touch-action: none; user-select: none; -webkit-user-select: none; }
+  .grid .selected { background: color-mix(in srgb, var(--accent) 28%, transparent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .grid .selected.cursor { box-shadow: inset 0 0 0 2px var(--accent); }
   .grid .conflict .v { color: var(--err); text-decoration: underline wavy; }
   .grid .conflict { box-shadow: inset 0 0 0 1px var(--err); }
-  .grid .selected.conflict { box-shadow: inset 0 0 0 2px var(--accent); }
+  .grid .selected.cursor.conflict { box-shadow: inset 0 0 0 2px var(--accent); }
   .grid .right { border-right: 2px solid var(--ink); }
   .grid .bottom { border-bottom: 2px solid var(--ink); }
   .mark { position: absolute; inset: 0; opacity: .38; pointer-events: none; }
