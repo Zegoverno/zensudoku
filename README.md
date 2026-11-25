@@ -22,6 +22,7 @@ Click or tap a cell, then the pad, or use the keyboard:
 | arrows | move |
 | 1–9 | place a digit (or a note, in Corner or Center mode) |
 | Shift+1–9 | corner note |
+| Alt+1–9 (or hold a pad digit) | show only that digit: tint its cells, dim other notes; again or Esc to clear |
 | Shift+arrows, Shift+click, Ctrl/Cmd+click, drag | select several cells (a drag with Shift or Ctrl adds to the selection) |
 | Ctrl+A | select every empty cell |
 | Esc | back to one selected cell |
