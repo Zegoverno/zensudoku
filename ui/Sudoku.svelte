@@ -51,6 +51,16 @@
   const activeCellsList = $derived(activeCells(puzzle));
   // A digit is used up once it is placed as many times as the grid holds it, with none of them in conflict:
   // its pad button dims and gets a check (it still works, to fix or note).
+  // Digit focus (Alt+digit, or a long press on the pad): tint the cells where the digit is placed or noted and
+  // dim every other note, so one digit's pattern (X-Wing, Swordfish, Skyscraper…) stands out.
+  let focus = $state(0), focusOf = '';
+  $effect(() => { if (focusOf !== puzzle.id) { focusOf = puzzle.id; focus = 0; } });
+  function toggleFocus(n: number) { focus = focus === n ? 0 : n; }
+  const focusSet = $derived(new Set(focus ? activeCellsList.filter(i => board.cells[i] === focus || (!board.cells[i] && (notesOf(board.corner[i]).includes(focus) || notesOf(board.center[i]).includes(focus)))) : []));
+  let pressTimer = 0, longPressed = false;
+  function padDown(n: number) { clearTimeout(pressTimer); longPressed = false; pressTimer = window.setTimeout(() => { longPressed = true; toggleFocus(n); }, 450); }
+  function padUp() { clearTimeout(pressTimer); }
+  function padClick(n: number) { if (longPressed) { longPressed = false; return; } act(enter(game, n)); }
   const usedUp = $derived.by(() => {
     const per = activeCellsList.length / digitList.length, count = new Map<number, number>(), out = new Set<number>();
     if (!Number.isInteger(per)) return out;
@@ -213,8 +223,11 @@
     }
     if (host.zen && (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'y') { act(redo(game)); return true; }
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'a') { act(selectAll(game)); return true; }
+    const focusKey = /^Digit([1-9])$/.exec(e.code)?.[1];
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && focusKey && Number(focusKey) <= digitList.length) { toggleFocus(Number(focusKey)); return true; }
     if (e.ctrlKey || e.metaKey || e.altKey) return false;
     if (e.key === 'Escape' && board.selection.length > 1 && !picking) { select(board.selected, true); return true; }
+    if (e.key === 'Escape' && focus && !picking) { focus = 0; return true; }
     const moves: Record<string, [number,number]> = { ArrowLeft: [0,-1], ArrowRight: [0,1], ArrowUp: [-1,0], ArrowDown: [1,0] };
     const digit = /^Digit([1-9])$/.exec(e.code)?.[1];
     if (e.key in moves) {
@@ -334,6 +347,7 @@
       class:related={board.selected !== i && peerSet.has(i)}
       class:chess={board.selected !== i && chessSet.has(i)}
       class:matching={!!n && n === board.cells[board.selected]}
+      class:focused={focusSet.has(i)}
       class:conflict={bad.has(i)}
       class:hinted={hintCell === i}
       class:labeled={cageLabel.has(i)}
@@ -347,8 +361,8 @@
       {#if board.colors[i]}<i class="mark" style:background={`var(--c${board.colors[i]})`}></i>{/if}
       {#if n}<span class="v">{n}</span>
       {:else}
-        {#if board.corner[i]}<span class="corner" aria-hidden="true">{#each notesOf(board.corner[i]) as d, k}<b style:grid-area={`${SLOTS[k][0]} / ${SLOTS[k][1]}`}>{d}</b>{/each}</span>{/if}
-        {#if board.center[i]}<span class="center" aria-hidden="true">{notesOf(board.center[i]).join('')}</span>{/if}
+        {#if board.corner[i]}<span class="corner" aria-hidden="true">{#each notesOf(board.corner[i]) as d, k}<b class:off={!!focus && d !== focus} style:grid-area={`${SLOTS[k][0]} / ${SLOTS[k][1]}`}>{d}</b>{/each}</span>{/if}
+        {#if board.center[i]}<span class="center" aria-hidden="true">{#each notesOf(board.center[i]) as d}<i class:off={!!focus && d !== focus}>{d}</i>{/each}</span>{/if}
       {/if}
     </button>
 {/snippet}
@@ -486,8 +500,10 @@
     {#each digitList as n}
       <button aria-label={mode === 'value' ? `Place ${n}` : `${LABEL[mode]} mark ${n}${autoCorner ? ' (auto)' : ''}`}
         class:on={mode !== 'value' && hasNoteOnAll(game, mode, n)}
-        class:done={usedUp.has(n)} title={usedUp.has(n) ? `All ${n}s placed` : undefined}
-        onclick={() => act(enter(game, n))}>{n}</button>
+        class:done={usedUp.has(n)} class:focus={focus === n} aria-keyshortcuts={`Alt+${n}`}
+        title={`${usedUp.has(n) ? `All ${n}s placed. ` : ''}Hold (or Alt+${n}) to show only ${n}s`}
+        onpointerdown={() => padDown(n)} onpointerup={padUp} onpointerleave={padUp} oncontextmenu={e => e.preventDefault()}
+        onclick={() => padClick(n)}>{n}</button>
     {/each}
   </div>
   <div class="colors" role="group" aria-label="Cell colors">
@@ -614,6 +630,9 @@
   .grid .related { background: color-mix(in srgb, var(--accent) 12%, transparent); }
   .grid .chess { background: color-mix(in srgb, var(--chess, #d08a1e) 22%, transparent); }
   .grid .matching { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  .grid .focused { background: color-mix(in srgb, #f2b705 34%, transparent); }
+  .grid .off { opacity: .15; }
+  .center i { font-style: normal; }
   .grid, .grid button { touch-action: none; user-select: none; -webkit-user-select: none; }
   .grid button.selected { background: color-mix(in srgb, var(--accent) 42%, transparent); box-shadow: inset 0 0 0 2px var(--accent); }
   .grid .selected.cursor { box-shadow: inset 0 0 0 3px var(--accent); }
@@ -641,6 +660,7 @@
   .digits button { border: 1px solid var(--faint); border-radius: var(--r-md); min-height: 42px; font-size: 20px; padding: 0; background: var(--soft); }
   .digits button.on { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
   .digits button.done { position: relative; color: var(--faint); }
+  .digits button.focus { border-color: #c99600; background: color-mix(in srgb, #f2b705 34%, var(--soft)); }
   .digits button.done::after { content: '✓'; position: absolute; top: 2px; right: 5px; font-size: 11px; color: var(--accent); }
   .colors { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin-bottom: 10px; }
   .colors button { min-height: 32px; border-radius: var(--r-md); border: 1px solid var(--faint); background: color-mix(in srgb, var(--sw) 45%, transparent); }

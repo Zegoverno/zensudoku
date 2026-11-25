@@ -164,6 +164,20 @@ try {
   await page.getByRole('button', { name: 'Color Blue' }).click();
   assert.equal(await at.getAttribute('data-color'), '5');
   await shot(page, 'pwa-notes');
+  // digit focus: Alt+digit tints the cells holding the digit and dims other notes; Esc clears; a long press on the pad toggles it
+  await page.keyboard.press('Alt+1');
+  assert.ok((await at.getAttribute('class')).includes('focused'), 'Alt+1 tints a cell with a 1 note');
+  assert.ok((await at.locator('.corner b', { hasText: '3' }).getAttribute('class')).includes('off'), 'other notes dim');
+  assert.ok((await page.locator('.digits button').nth(0).getAttribute('class')).includes('focus'));
+  await shot(page, 'pwa-digit-focus');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('.grid button.focused').count(), 0, 'Esc clears the focus');
+  const pad2 = page.locator('.digits button').nth(1);
+  await pad2.hover(); await page.mouse.down(); await page.waitForTimeout(600); await page.mouse.up();
+  assert.ok((await at.getAttribute('class')).includes('focused'), 'a long press on 2 focuses 2 (center note)');
+  assert.equal(await at.getAttribute('data-center'), '2', 'the long press did not enter a digit');
+  await page.keyboard.press('Alt+2');
+  assert.equal(await page.locator('.grid button.focused').count(), 0, 'Alt+2 again clears it');
   await page.getByRole('button', { name: 'Value', exact: true }).click();
   const sol = catalog.solution[cell];
   await page.keyboard.press(sol);
