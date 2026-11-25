@@ -236,6 +236,24 @@ try {
   assert.equal(await page.locator('.grid button[data-value]:not([data-value=""])').count(), before);
   await shot(page, 'pwa-hint');
 
+  const guide = page.getByRole('dialog', { name: 'Sudoku handbook' });
+  await page.getByRole('button', { name: /^Learn: / }).click();
+  await guide.waitFor();
+  const lesson = page.getByTestId('handbook-page');
+  assert.match(await lesson.getAttribute('data-section'), /^(naked|hidden)-single$/);
+  await lesson.getByRole('button', { name: 'Next step' }).click();
+  await page.keyboard.press('7');
+  assert.equal(await page.locator('.grid button[data-value]:not([data-value=""])').count(), before);
+  await page.keyboard.press('Escape');
+  await guide.waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Learn', exact: true }).click();
+  await guide.getByLabel('Go to lesson').selectOption('x-wing');
+  assert.equal(await lesson.getAttribute('data-section'), 'x-wing');
+  await lesson.getByRole('button', { name: /Why/ }).click();
+  await lesson.locator('.frame').waitFor();
+  await guide.getByRole('button', { name: 'Close handbook' }).click();
+  await guide.waitFor({ state: 'hidden' });
+
   // Enter a puzzle: refused with a reason, then accepted
   await page.getByText('Enter a puzzle', { exact: true }).click();
   const box = page.getByLabel('Puzzle text');
@@ -303,6 +321,10 @@ try {
   await page.waitForFunction(() => navigator.serviceWorker.controller);
   await context.setOffline(true);
   await page.reload();
+  await page.getByRole('button', { name: 'Learn', exact: true }).click();
+  await guide.getByLabel('Go to lesson').selectOption('phistomefel');
+  assert.equal(await lesson.getAttribute('data-section'), 'phistomefel');
+  await guide.getByRole('button', { name: 'Close handbook' }).click();
   await context.setOffline(false);
   await page.getByTestId('pad-drawing').waitFor();
   assert.equal(await page.locator('[data-cell="2"]').getAttribute('data-value'), '3');
@@ -656,8 +678,15 @@ try {
   await ui.getByRole('button', { name: 'Hint' }).click();
   assert.match(await ui.getByTestId('hint').textContent(), /aren't available for this variant/);
 
+  await ui.getByRole('button', { name: 'Browse variant rules' }).click();
+  const variantGuide = ui.getByRole('dialog', { name: 'Sudoku handbook' });
+  await variantGuide.waitFor();
+  assert.equal(await ui.getByTestId('handbook-page').getAttribute('data-section'), 'variants');
+  await variantGuide.getByRole('button', { name: 'Close handbook' }).click();
+  await variantGuide.waitFor({ state: 'hidden' });
+
   // Inline clue popover and helper on a phone, in the MCP board.
-  const cageSource = TINY.replace("ca:[", "ca:[{ce:[[0,2],[0,3]],v:5},");
+  const cageSource = TINY.replace("ca:[", "ca:[{ce:[[0,2],[0,3]],v:5},").replace("Normal sudoku rules apply.", "Killer cage digits sum to the total and may not repeat.");
   const openedCage = await mcp.callTool({ name: 'zensudoku_new', arguments: { puzzle: cageSource } });
   assert.ok(!openedCage.isError);
   const live = page => page.exposeFunction('liveTools', params => mcp.callTool(params));
@@ -698,6 +727,13 @@ try {
   await cageResults.waitFor({ state: 'hidden' });
   await liveBoard.getByText('Sudoku helper', { exact: true }).click();
   const panel = liveBoard.getByRole('region', { name: 'Sudoku helper' });
+  const ruleLink = liveBoard.getByRole('button', { name: 'Killer cages', exact: true });
+  await ruleLink.tap();
+  const learnDialog = liveBoard.getByRole('dialog', { name: 'Sudoku handbook' });
+  await learnDialog.waitFor();
+  assert.equal(await liveBoard.getByTestId('handbook-page').getAttribute('data-section'), 'killer');
+  await learnDialog.getByRole('button', { name: 'Close handbook' }).tap();
+  await learnDialog.waitFor({ state: 'hidden' });
   await boardPage.evaluate(() => { window.ignoreReports = false; });
   await liveBoard.locator('[data-cell="2"]').tap();
   const selected = panel.getByTestId('selected-cage');
