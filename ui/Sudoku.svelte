@@ -11,6 +11,9 @@
   import { arrowPoints, cageEdges, centre, thermoPoints } from '../core/sudoku-draw.ts';
   import { activeCells, coord, digitsOf, geometryUnits, moveCell, widthOf } from '../core/sudoku-extra.ts';
   import PadDrawing from './PadDrawing.svelte';
+  import Handbook from './Handbook.svelte';
+  import { CHAPTERS } from './handbook/chapters.js';
+  import { hintLesson, variantLessons } from '../core/learning.ts';
   import Helper from './Helper.svelte';
   import ClueCalc from './ClueCalc.svelte';
   import { cageOf, sumCages } from '../core/calc.ts';
@@ -30,10 +33,14 @@
     store: Store; onchange?: (s: Snapshot) => void; host?: HostView; oncommands?: (a: Avail) => void; onkey?: (e: KeyboardEvent, typing: boolean) => void;
     library?: LibrarySource; onlink?: (url: string) => void; importer?: boolean;
   } = $props();
+  const titles = new Map(CHAPTERS.flatMap(ch => ch.sections.map(l => [l.id, l.title] as const)));
+  let guide = $state<string | null>(null);
+  function learn(id = 'how') { guide = id; }
   const game = $derived(store.game);
   const save = () => { store.save(); elapsed = store.elapsed(); };
 
   const puzzle = $derived(puzzleOf(game));
+  const lessonLinks = $derived(variantLessons(puzzle).filter(id => titles.has(id)));
   const board = $derived(peekBoard(game));
   const selectedCage = $derived(cageOf(puzzle, board.selected));
   const helperCage = $derived(selectedCage ? { sum: selectedCage.sum, size: selectedCage.cells.length, placed: selectedCage.cells.map(i => board.cells[i]).filter(Boolean) } : null);
@@ -209,7 +216,7 @@
   });
   $effect(() => { if (host.zen) oncommands?.({ ...avail }); });
   function key(e: KeyboardEvent) {
-    if (e.defaultPrevented || e.isComposing) return;
+    if (guide !== null || e.defaultPrevented || e.isComposing) return;
     const inField = typing(e), blocked = inField || (e.target instanceof HTMLElement && (e.target.matches('select') || !!e.target.closest('.helper-controls, .auto-clear')));
     if (!blocked && handle(e)) { e.preventDefault(); return; }
     // Under zenbot, every key the board did not use goes to the host, which owns the declared shortcuts.
@@ -262,7 +269,7 @@
   }
 
   // Entering a puzzle, and asking for a hint.
-  let pasted = $state(''), entryError = $state(''), hintText = $state(''), hintCell = $state(-1);
+  let pasted = $state(''), entryError = $state(''), hintText = $state(''), hintCell = $state(-1), hintSection = $state<string>();
   function play() {
     const made = customPuzzle(pasted);
     if (typeof made === 'string') { entryError = made; return; }
@@ -271,10 +278,11 @@
   }
   function askHint() {
     const h = nextHint(puzzle, board.cells);
+    hintSection = hintLesson(h.kind);
     hintText = h.message; hintCell = h.kind === 'naked' || h.kind === 'hidden' ? h.cell! : -1;
     if (hintCell >= 0) select(hintCell, true);
   }
-  $effect(() => { puzzle.id; board.cells.join(''); hintText = ''; hintCell = -1; });
+  $effect(() => { puzzle.id; board.cells.join(''); hintText = ''; hintCell = -1; hintSection = undefined; });
 
   // The library picker, and importing a SudokuPad source.
 
@@ -377,7 +385,8 @@
   <div class="top">
   <header>
     {#if !host.zen}<div><div class="eyebrow">Games</div><h1>Sudoku</h1></div>{/if}
-    <button class="action puzzle-picker" bind:this={pickerButton} aria-expanded={picking} onclick={() => (picking ? closePicker(true) : openPicker())}>Puzzles <span aria-hidden="true">▾</span></button>
+    <div class="header-actions"><button class="action" type="button" onclick={() => learn()}>Learn</button>
+    <button class="action puzzle-picker" bind:this={pickerButton} aria-expanded={picking} onclick={() => (picking ? closePicker(true) : openPicker())}>Puzzles <span aria-hidden="true">▾</span></button></div>
   </header>
   {#if picking}<LibraryPicker list={pickerList} loading={!!library && !libList && !libError} error={libError} {mark} onpick={pick} onclose={() => closePicker(true)} />{/if}
   {#if sp}
@@ -518,10 +527,22 @@
   <div class="hint">
     <button class="action" onclick={askHint}>Hint</button>
     <span role="status" data-testid="hint">{hintText}</span>
+    {#if hintSection}<button class="lesson-link" type="button" onclick={() => learn(hintSection)}>{hintSection === 'naked-pair' ? 'Try: ' : 'Learn: '}{titles.get(hintSection)}</button>
+    {:else if hintText && lessonLinks.length}
+      <button class="lesson-link" type="button" onclick={() => learn(lessonLinks.length === 1 ? lessonLinks[0] : 'variants')}>Learn the rules</button>
+    {:else if hintText && !hintable(puzzle)}
+      <button class="lesson-link" type="button" onclick={() => learn('variants')}>Browse variant rules</button>
+    {/if}
   </div>
   <label class="auto-clear"><input type="checkbox" role="switch" checked={game.autoClear} onchange={toggleAutoClear} /> Auto-clear notes</label>
     <details class="helper-controls enter">
       <summary>Sudoku helper</summary>
+      {#if lessonLinks.length || hintSection}
+        <div class="helper-lessons" aria-label="Relevant lessons">
+          {#if hintSection}<button class="lesson-link" type="button" onclick={() => learn(hintSection)}>{titles.get(hintSection)}</button>{/if}
+          {#each lessonLinks as id}<button class="lesson-link" type="button" onclick={() => learn(id)}>{titles.get(id)}</button>{/each}
+        </div>
+      {/if}
       <Helper digits={digitsOf(puzzle)} cell={coord(puzzle, board.selected)} cage={helperCage} />
     </details>
   <details class="enter">
@@ -550,6 +571,8 @@
   </div>
 </div>
 
+{#if guide !== null}<Handbook section={guide} onclose={() => guide = null} />{/if}
+
 <style>
   .auto-clear { display: flex; align-items: center; gap: 6px; font-size: .85rem; }
   .auto-clear input { accent-color: var(--accent); width: 18px; height: 18px; }
@@ -560,6 +583,9 @@
   .wide .top { grid-area: top; } .wide .bottom { grid-area: bottom; } .wide .board-scroll { grid-area: board; }
   .top, .bottom { min-width: 0; }
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .header-actions, .helper-lessons { display:flex; gap:8px; flex-wrap:wrap; }
+  .helper-lessons { padding:8px 0; }
+  .lesson-link { color:var(--accent); text-decoration:underline; text-underline-offset:2px; text-align:left; background:none; border:0; padding:4px; font-size:.82rem; }
   .zen header { justify-content: flex-end; }
   h1 { font-family: var(--heading); font-size: 30px; font-weight: 550; margin: 4px 0; letter-spacing: -.04em; }
   .info strong { font-family: var(--heading); font-weight: 600; }
@@ -673,7 +699,7 @@
   .clues ul { margin: 0; padding-left: 18px; color: var(--dim); line-height: 1.5; }
   footer { margin-top: 12px; }
   footer span { color: var(--dim); font-size: 11px; line-height: 1.7; }
-  .hint { display: flex; align-items: center; gap: 10px; margin: 10px 0 0; font-size: 12px; line-height: 1.5; }
+  .hint { display: flex; flex-wrap:wrap; align-items: center; gap: 10px; margin: 10px 0 0; font-size: 12px; line-height: 1.5; }
   .hint span { color: var(--dim); min-width: 0; }
   .enter { margin: 12px 0 0; font-size: 12px; }
   .helper-controls { border: 1px solid var(--faint); border-radius: var(--r-md); padding: 4px 10px; background: var(--soft); }

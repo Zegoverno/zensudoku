@@ -1,5 +1,11 @@
 # zensudoku
 
+
+**Learn** opens an illustrated handbook bundled with the game, including common
+variant rules. Hint links open the technique that was used, and the Sudoku
+helper links to relevant rule lessons when it can identify them. The guide
+works offline and does not change your board.
+
 Sudoku with value, corner and center notes, six cell colors, undo and redo, hints and conflict
 marking. It also plays [SudokuPad](https://sudokupad.app) puzzles, drawn the way SudokuPad draws
 them, from a source you import or from a local library of your own. One code base, three ways to run it:
